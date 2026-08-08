@@ -95,14 +95,17 @@ fn positions_to_poly(
         for k in 0..modulus {
             let is_avail = available[k] as usize;
             // is_target = all-ones mask if cumsum == target AND available[k] == 1, else 0
-            let is_target = if cumsum == target && available[k] == 1 { !0usize } else { 0usize };
+            // Constant-time: (cumsum ^ target) == 0  &&  (available[k] ^ 1) == 0
+            // Combined: (cumsum ^ target) | (available[k] ^ 1) == 0
+            let diff = (cumsum ^ target) | (available[k] as usize ^ 1);
+            let is_target = diff.wrapping_sub(1) >> (usize::BITS - 1);
 
             // CT select: positions[pos_count] = (k & is_target) | (positions[pos_count] & !is_target)
             let old_val = positions[pos_count];
             positions[pos_count] = (k & is_target) | (old_val & !is_target);
 
             // CT update available: available[k] &= !is_target
-            available[k] = if is_target != 0 { 0 } else { available[k] };
+            available[k] = (available[k] as usize & !is_target) as u8;
 
             cumsum += is_avail;
         }
@@ -132,7 +135,7 @@ pub fn shake128_xof(seed: &[u8], length: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_shake128_length() {
         let buf = shake128_xof(b"test", 64);
@@ -189,7 +192,12 @@ mod tests {
 
         // All positions should be unique
         let unique: std::collections::HashSet<usize> = positions.iter().cloned().collect();
-        assert_eq!(unique.len(), count, "all {} positions should be unique", count);
+        assert_eq!(
+            unique.len(),
+            count,
+            "all {} positions should be unique",
+            count
+        );
     }
 
     #[test]
