@@ -1,0 +1,12 @@
+[package]
+name = "arcb-fuzz"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arcb-stegano-trapdoor = { path = ".." }
+afl = "0.15"
+
+[[bin]]
+name = "fuzz_decoder"
+path = "src/fuzz_decoder.rs"
