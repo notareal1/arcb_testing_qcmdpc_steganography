@@ -244,7 +244,7 @@ mod tests {
 /// then there's a 4-cycle: check_0 → var_{p1} → check_{p1-p2} → var_{p3} → check_0.
 ///
 /// This is a necessary condition for girth >= 6 (not sufficient — full check requires BFS).
-/// Constant-time: no early returns, full scan with mask accumulation.
+/// Constant-time: no early returns, full scan with mask accumulation. No HashSet (timing leak).
 pub fn check_girth(poly: &crate::polynomial::Polynomial, min_girth: usize) -> bool {
     if min_girth <= 4 {
         return true;
@@ -253,8 +253,12 @@ pub fn check_girth(poly: &crate::polynomial::Polynomial, min_girth: usize) -> bo
     if ones.len() < 3 {
         return true;
     }
-    let ones_set: std::collections::HashSet<usize> = ones.iter().cloned().collect();
-    // Check all triples (not just first 20) — O(w^3) but w=45 is small
+    // Constant-time: use bitset array instead of HashSet to avoid timing leaks
+    let mut ones_bitset = [0u8; M];
+    for &p in &ones {
+        ones_bitset[p] = 1;
+    }
+    // Check all triples — O(w^3) but w=45 is small
     // Constant-time: no early returns, accumulate result in mask
     let mut has_4cycle = 0u8;
     for i in 0..ones.len() {
@@ -265,7 +269,9 @@ pub fn check_girth(poly: &crate::polynomial::Polynomial, min_girth: usize) -> bo
                 }
                 // 4-cycle condition: (p_i + p_j - p_k) mod M is in ones
                 let p4 = (ones[i] + ones[j] + M - ones[k]) % M;
-                let is_4cycle = (p4 != ones[i] && p4 != ones[j] && p4 != ones[k] && ones_set.contains(&p4)) as u8;
+                // CT lookup: ones_bitset[p4] is 0 or 1
+                let in_set = ones_bitset[p4] as u8;
+                let is_4cycle = (p4 != ones[i] && p4 != ones[j] && p4 != ones[k] && in_set == 1) as u8;
                 has_4cycle |= is_4cycle;
             }
         }

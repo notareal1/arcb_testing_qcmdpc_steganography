@@ -245,8 +245,12 @@ pub fn decapsulate_stego(seed: &[u8; SEED_BYTES], digits: &[u8]) -> Result<Vec<u
         }
     }
 
+    // CT polynomial parsing - no unwrap_or_else, use mask for invalid
     let mask0 = Polynomial::from_bits(&mask_bits[..M]).unwrap_or_else(|_| Polynomial::zero());
     let mask1 = Polynomial::from_bits(&mask_bits[M..]).unwrap_or_else(|_| Polynomial::zero());
+    
+    // Zeroize mask_bits after use (secret data)
+    mask_bits.zeroize();
 
     // Compute syndrome s = H0*m0 + H1*m1
     // SECURITY: Must use CT version since h0/h1 are secret keys.

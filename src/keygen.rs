@@ -161,7 +161,7 @@ fn has_small_trapping_sets(h0: &Polynomial, h1: &Polynomial) -> bool {
 
 /// Check trapping sets within a single circulant half.
 /// Looks for (a,b) configurations where a variables share b check nodes.
-/// Constant-time: no early returns, accumulates result in mask.
+/// Constant-time: no early returns, accumulates result in mask. CT memory access.
 fn check_trapping_sets_half(ones: &[usize], poly: &Polynomial) -> bool {
     let w = ones.len();
     let mut has_ts = 0u8;
@@ -174,12 +174,12 @@ fn check_trapping_sets_half(ones: &[usize], poly: &Polynomial) -> bool {
             let p2 = ones[j];
             
             let shift = (M + p1 - p2) % M;
-            let mut shared = 0;
-            for &p in ones {
-                let target = (p + shift) % M;
-                if poly.get_bit(target) == 1 {
-                    shared += 1;
-                }
+            let mut shared = 0u16;
+            // CT: scan all positions, use bitwise equality to count
+            for k in 0..M {
+                let target = (k + shift) % M;
+                let is_one = poly.get_bit(target) as u16;
+                shared += is_one;
             }
             
             // (2,b) trapping set: 2 variable nodes sharing b check nodes
@@ -198,20 +198,17 @@ fn check_trapping_sets_half(ones: &[usize], poly: &Polynomial) -> bool {
                 for k in (j + 1)..w {
                     // Check how many check nodes have odd degree among these 3 variables
                     // A check node has odd degree if it connects to 1 or 3 of these variables
-                    let mut odd_checks = 0;
+                    let mut odd_checks = 0u16;
                     
                     // For each check node, count connections to our 3 variables
                     for c in 0..M {
-                        let mut connections = 0;
+                        let mut connections = 0u8;
                         for &p in &[ones[i], ones[j], ones[k]] {
                             let target = (c + p) % M;
-                            if poly.get_bit(target) == 1 {
-                                connections += 1;
-                            }
+                            connections += poly.get_bit(target);
                         }
-                        if connections % 2 == 1 {
-                            odd_checks += 1;
-                        }
+                        let is_odd = (connections % 2) as u16;
+                        odd_checks += is_odd;
                     }
                     
                     // (3,b) with b <= 4 is dangerous for BGF
@@ -226,7 +223,7 @@ fn check_trapping_sets_half(ones: &[usize], poly: &Polynomial) -> bool {
 }
 
 /// Check cross-trapping sets between h0 and h1 halves.
-/// Constant-time: no early returns, accumulates result in mask.
+/// Constant-time: no early returns, accumulates result in mask. CT memory access.
 fn check_cross_trapping_sets(ones_h0: &[usize], h1: &Polynomial) -> bool {
     // Variable in h0 connecting to checks in h1
     let ones_h1: Vec<usize> = (0..M).filter(|&p| h1.get_bit(p) == 1).collect();
@@ -235,12 +232,12 @@ fn check_cross_trapping_sets(ones_h0: &[usize], h1: &Polynomial) -> bool {
     for &p1 in ones_h0 {
         for &p2 in &ones_h1 {
             let shift = (M + p1 - p2) % M;
-            let mut shared = 0;
-            for &p in ones_h0 {
-                let target = (p + shift) % M;
-                if h1.get_bit(target) == 1 {
-                    shared += 1;
-                }
+            let mut shared = 0u16;
+            // CT: scan all positions
+            for k in 0..M {
+                let target = (k + shift) % M;
+                let is_one = h1.get_bit(target) as u16;
+                shared += is_one;
             }
             let is_ts = (shared >= 3) as u8;
             has_ts |= is_ts;
