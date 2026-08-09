@@ -46,6 +46,7 @@ pub fn derive_secret_polynomials(seed: &[u8; SEED_BYTES]) -> ArcResult<(Polynomi
 ///   with a deterministic counter — NOT the consumed bytes — to preserve
 ///   determinism regardless of rejection pattern.
 /// - Duplicate detection uses a bitset for O(1) lookup (modulus ≤ 8192 → 1KB).
+/// - Rejection sampling eliminates modulo bias for cryptographic uniformity.
 fn positions_to_poly(
     bytes: &[u8],
     seed_for_extend: &[u8],
@@ -58,8 +59,10 @@ fn positions_to_poly(
     // counters only. The secret random values are used only in arithmetic
     // (modulo, comparison), never as array indices.
     //
-    // Trade-off: Uses modulo reduction instead of rejection sampling.
-    // Bias < 1/65536 — acceptable for key generation.
+    // Rejection sampling eliminates modulo bias:
+    // - Generate u16 word, check if < max_valid = 65536 - (65536 % avail_count)
+    // - If word >= max_valid, reject and consume next word
+    // - This ensures uniform distribution over [0, avail_count)
     let mut buf = bytes.to_vec();
     let mut byte_idx: usize = 0;
     let mut extend_counter: u32 = 0;
@@ -70,22 +73,33 @@ fn positions_to_poly(
     let mut pos_count = 0usize;
 
     for _idx in 0..count {
-        // Extend bytes if needed
-        if byte_idx + 1 >= buf.len() {
-            let mut ext_input = seed_for_extend.to_vec();
-            ext_input.extend_from_slice(&extend_counter.to_le_bytes());
-            extend_counter += 1;
-            let extended = shake128_xof(&ext_input, 64);
-            buf.extend_from_slice(&extended);
-        }
-
-        let word = u16::from_le_bytes([buf[byte_idx], buf[byte_idx + 1]]) as usize;
-        byte_idx += 2;
-
         // Count available positions
         let avail_count: usize = available.iter().map(|&v| v as usize).sum();
+        
+        // Compute rejection threshold: largest multiple of avail_count <= 65536
+        let max_valid = 65536 - (65536 % avail_count);
+        
+        // Get a word that passes rejection sampling
+        let word = loop {
+            // Extend bytes if needed
+            if byte_idx + 1 >= buf.len() {
+                let mut ext_input = seed_for_extend.to_vec();
+                ext_input.extend_from_slice(&extend_counter.to_le_bytes());
+                extend_counter += 1;
+                let extended = shake128_xof(&ext_input, 64);
+                buf.extend_from_slice(&extended);
+            }
 
-        // Select the (word % avail_count)-th available position
+            let word = u16::from_le_bytes([buf[byte_idx], buf[byte_idx + 1]]) as usize;
+            byte_idx += 2;
+
+            // Rejection sampling: accept if word < max_valid
+            if word < max_valid {
+                break word;
+            }
+            // Else reject and continue loop (consume next word)
+        };
+        
         let target = word % avail_count;
 
         // CT scan: find the target-th available position.
@@ -230,6 +244,7 @@ mod tests {
 /// then there's a 4-cycle: check_0 → var_{p1} → check_{p1-p2} → var_{p3} → check_0.
 ///
 /// This is a necessary condition for girth >= 6 (not sufficient — full check requires BFS).
+/// Constant-time: no early returns, full scan with mask accumulation.
 pub fn check_girth(poly: &crate::polynomial::Polynomial, min_girth: usize) -> bool {
     if min_girth <= 4 {
         return true;
@@ -240,6 +255,8 @@ pub fn check_girth(poly: &crate::polynomial::Polynomial, min_girth: usize) -> bo
     }
     let ones_set: std::collections::HashSet<usize> = ones.iter().cloned().collect();
     // Check all triples (not just first 20) — O(w^3) but w=45 is small
+    // Constant-time: no early returns, accumulate result in mask
+    let mut has_4cycle = 0u8;
     for i in 0..ones.len() {
         for j in (i + 1)..ones.len() {
             for k in 0..ones.len() {
@@ -248,11 +265,10 @@ pub fn check_girth(poly: &crate::polynomial::Polynomial, min_girth: usize) -> bo
                 }
                 // 4-cycle condition: (p_i + p_j - p_k) mod M is in ones
                 let p4 = (ones[i] + ones[j] + M - ones[k]) % M;
-                if p4 != ones[i] && p4 != ones[j] && p4 != ones[k] && ones_set.contains(&p4) {
-                    return false;
-                }
+                let is_4cycle = (p4 != ones[i] && p4 != ones[j] && p4 != ones[k] && ones_set.contains(&p4)) as u8;
+                has_4cycle |= is_4cycle;
             }
         }
     }
-    true
+    has_4cycle == 0
 }

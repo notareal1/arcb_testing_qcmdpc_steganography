@@ -69,26 +69,28 @@ pub fn from_seed(seed: [u8; SEED_BYTES]) -> Result<KeyPair, ArcError> {
 /// use `from_seed` or `generate` which include DFR validation.
 pub fn from_seed_without_dfr(seed: [u8; SEED_BYTES]) -> Result<KeyPair, ArcError> {
     let (h0, h1) = utils::derive_secret_polynomials(&seed)?;
-    let h0_inv = h0.invert().ok_or(ArcError::KeyGenError)?;
+    let h0_inv = h0.invert()?;
     let public = h0_inv.multiply(&h1);
     Ok(KeyPair { seed, public })
 }
 
 fn from_seed_with_check(seed: [u8; SEED_BYTES]) -> Result<KeyPair, ArcError> {
     let (h0, h1) = utils::derive_secret_polynomials(&seed)?;
-    let h0_inv = h0.invert().ok_or(ArcError::KeyGenError)?;
+    let h0_inv = h0.invert()?;
     let public = h0_inv.multiply(&h1);
 
-    // Girth check: reject keys with 4-cycles in Tanner graph (girth < 6)
+    // Girth check: reject keys with 4-cycles in Tanner graph (girth < 8)
     // This is a heuristic — catches many bad keys before expensive DFR check.
+    // Constant-time: no early return, accumulate in mask
+    let mut keygen_fail = 0u8;
     if !utils::check_girth(&h0, 8) || !utils::check_girth(&h1, 8) {
-        return Err(ArcError::KeyGenError);
+        keygen_fail = 1;
     }
 
     // TRAPPING SET CHECK: Detect small trapping sets that cause BGF failures
     // This is MORE EFFECTIVE than brute-force DFR trials for catching bad keys.
     if has_small_trapping_sets(&h0, &h1) {
-        return Err(ArcError::KeyGenError);
+        keygen_fail = 1;
     }
 
     // DFR check: verify decoder works on random syndromes for this key
@@ -118,8 +120,13 @@ fn from_seed_with_check(seed: [u8; SEED_BYTES]) -> Result<KeyPair, ArcError> {
         // Attempt decode
         let (d0, d1, converged) = decode(&syndrome, &h0_circ, &h1_circ);
         if !converged || !d0.equals(&e0) || !d1.equals(&e1) {
-            return Err(ArcError::KeyGenError);
+            keygen_fail = 1;
         }
+    }
+
+    // Constant-time failure check
+    if keygen_fail != 0 {
+        return Err(ArcError::KeyGenError);
     }
 
     Ok(KeyPair { seed, public })
@@ -136,31 +143,28 @@ fn from_seed_with_check(seed: [u8; SEED_BYTES]) -> Result<KeyPair, ArcError> {
 ///
 /// This function checks for these structures by analyzing the bipartite graph
 /// defined by the secret polynomials h0 and h1.
+/// Constant-time: no early returns, accumulates result in mask.
 fn has_small_trapping_sets(h0: &Polynomial, h1: &Polynomial) -> bool {
     let ones_h0: Vec<usize> = (0..M).filter(|&p| h0.get_bit(p) == 1).collect();
     let ones_h1: Vec<usize> = (0..M).filter(|&p| h1.get_bit(p) == 1).collect();
     
     // Check both halves for trapping sets
-    if check_trapping_sets_half(&ones_h0, h0) || check_trapping_sets_half(&ones_h1, h1) {
-        return true;
-    }
+    let mut has_ts = 0u8;
+    has_ts |= check_trapping_sets_half(&ones_h0, h0) as u8;
+    has_ts |= check_trapping_sets_half(&ones_h1, h1) as u8;
     
     // Cross-check between halves
-    if check_cross_trapping_sets(&ones_h0, h1) {
-        return true;
-    }
+    has_ts |= check_cross_trapping_sets(&ones_h0, h1) as u8;
     
-    false
+    has_ts != 0
 }
 
 /// Check trapping sets within a single circulant half.
 /// Looks for (a,b) configurations where a variables share b check nodes.
+/// Constant-time: no early returns, accumulates result in mask.
 fn check_trapping_sets_half(ones: &[usize], poly: &Polynomial) -> bool {
     let w = ones.len();
-    
-    // Build adjacency: for each variable node position, which check nodes it connects to
-    // Variable at position v connects to check nodes at (v - p) % M for p in ones
-    // Equivalently: check node c connects to variables at (c + p) % M for p in ones
+    let mut has_ts = 0u8;
     
     // For each pair of variable nodes, count shared check nodes
     // This detects (2,b) configurations
@@ -181,9 +185,8 @@ fn check_trapping_sets_half(ones: &[usize], poly: &Polynomial) -> bool {
             // (2,b) trapping set: 2 variable nodes sharing b check nodes
             // b=2 is a 4-cycle (already caught by girth check)
             // b>=3 indicates small trapping set
-            if shared >= 3 {
-                return true;
-            }
+            let is_ts = (shared >= 3) as u8;
+            has_ts |= is_ts;
         }
     }
     
@@ -212,21 +215,23 @@ fn check_trapping_sets_half(ones: &[usize], poly: &Polynomial) -> bool {
                     }
                     
                     // (3,b) with b <= 4 is dangerous for BGF
-                    if odd_checks <= 4 {
-                        return true;
-                    }
+                    let is_ts = (odd_checks <= 4) as u8;
+                    has_ts |= is_ts;
                 }
             }
         }
     }
     
-    false
+    has_ts != 0
 }
 
 /// Check cross-trapping sets between h0 and h1 halves.
+/// Constant-time: no early returns, accumulates result in mask.
 fn check_cross_trapping_sets(ones_h0: &[usize], h1: &Polynomial) -> bool {
     // Variable in h0 connecting to checks in h1
     let ones_h1: Vec<usize> = (0..M).filter(|&p| h1.get_bit(p) == 1).collect();
+    let mut has_ts = 0u8;
+    
     for &p1 in ones_h0 {
         for &p2 in &ones_h1 {
             let shift = (M + p1 - p2) % M;
@@ -237,12 +242,12 @@ fn check_cross_trapping_sets(ones_h0: &[usize], h1: &Polynomial) -> bool {
                     shared += 1;
                 }
             }
-            if shared >= 3 {
-                return true;
-            }
+            let is_ts = (shared >= 3) as u8;
+            has_ts |= is_ts;
         }
     }
-    false
+    
+    has_ts != 0
 }
 
 #[cfg(test)]

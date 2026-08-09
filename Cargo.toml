@@ -17,7 +17,6 @@ zeroize = { version = "1.8", features = ["zeroize_derive"] }
 subtle = "2.6"
 rayon = "1.10"
 
-
 [build-dependencies]
 cc = "1.1"
 

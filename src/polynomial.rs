@@ -88,13 +88,13 @@ impl Polynomial {
 
     #[inline]
     pub fn flip_bit(&mut self, index: usize) {
-        debug_assert!(index < M);
+        assert!(index < M, "Index out of bounds: {} >= {}", index, M);
         self.data[index / 8] ^= 1 << (index % 8);
     }
 
     #[inline]
     pub fn flip_bit_ct(&mut self, index: usize, mask: u8) {
-        debug_assert!(index < M);
+        assert!(index < M, "Index out of bounds: {} >= {}", index, M);
         self.data[index / 8] ^= mask << (index % 8);
     }
 
@@ -209,15 +209,15 @@ impl Polynomial {
     /// Inversion in R = GF(2)[x]/(x^M - 1) via extended Euclidean algorithm.
     /// NOTE: Not constant-time, but only called during key generation (not in decapsulation hot path).
     /// For production, consider using a constant-time GCD implementation.
-    pub fn invert(&self) -> Option<Self> {
+    pub fn invert(&self) -> Result<Self, ArcError> {
         let a = self.to_bit_vec();
         let mut f = vec![0u8; M + 1];
         f[0] = 1;
         f[M] = 1;
-        let (gcd, u, _v) = ext_gcd_poly(&a, &f);
-        if !(gcd.len() == 1 && gcd[0] == 1) { return None; }
+        let (gcd, u, _v) = ext_gcd_poly(&a, &f)?;
+        if !(gcd.len() == 1 && gcd[0] == 1) { return Err(ArcError::AlgebraicError("Polynomial not invertible".into())); }
         let inv = reduce_mod_l_final(&u, M);
-        Some(inv)
+        Ok(inv)
     }
 
     fn to_bit_vec(&self) -> Vec<u8> {
@@ -294,7 +294,7 @@ fn cyclic_shift_bytes(bytes: &[u8; PUBKEY_BYTES], shift: usize) -> [u8; PUBKEY_B
     result
 }
 
-fn ext_gcd_poly(a: &[u8], b: &[u8]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+fn ext_gcd_poly(a: &[u8], b: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), ArcError> {
     let mut r0 = a.to_vec();
     let mut r1 = b.to_vec();
     let mut s0 = vec![1u8];
@@ -303,14 +303,14 @@ fn ext_gcd_poly(a: &[u8], b: &[u8]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let mut t1 = vec![1u8];
 
     while !is_zero_poly(&r1) {
-        let (q, r) = poly_div(&r0, &r1);
+        let (q, r) = poly_div(&r0, &r1)?;
         let q_s1 = poly_mul(&q, &s1);
         let new_s = poly_add(&s0, &q_s1);
         let q_t1 = poly_mul(&q, &t1);
         let new_t = poly_add(&t0, &q_t1);
         r0 = r1; r1 = r; s0 = s1; s1 = new_s; t0 = t1; t1 = new_t;
     }
-    (r0, s0, t0)
+    Ok((r0, s0, t0))
 }
 
 fn reduce_mod_l_final(poly: &[u8], modulus_deg: usize) -> Polynomial {
@@ -325,11 +325,11 @@ fn reduce_mod_l_final(poly: &[u8], modulus_deg: usize) -> Polynomial {
     Polynomial::from_bit_vec_truncated(&coeffs)
 }
 
-fn poly_div(a: &[u8], b: &[u8]) -> (Vec<u8>, Vec<u8>) {
+fn poly_div(a: &[u8], b: &[u8]) -> Result<(Vec<u8>, Vec<u8>), ArcError> {
     let a = trim(a);
     let b = trim(b);
     if b.is_empty() || (b.len() == 1 && b[0] == 0) {
-        panic!("Division by zero polynomial");
+        return Err(ArcError::AlgebraicError("Division by zero polynomial".into()));
     }
     let b_deg = b.len() - 1;
     let mut r = a;
@@ -343,7 +343,7 @@ fn poly_div(a: &[u8], b: &[u8]) -> (Vec<u8>, Vec<u8>) {
         while r.last() == Some(&0) { r.pop(); }
     }
     if r.is_empty() { r = vec![0u8]; }
-    (trim(&q), trim(&r))
+    Ok((trim(&q), trim(&r)))
 }
 
 fn poly_mul(a: &[u8], b: &[u8]) -> Vec<u8> {
