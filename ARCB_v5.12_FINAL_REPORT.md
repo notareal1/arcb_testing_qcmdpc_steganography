@@ -210,6 +210,20 @@ winget install BrechtSanders.WinLibs.POSIX.UCRT
 
 ---
 
+## Acknowledgments
+
+This implementation was developed with assistance from multiple AI models for code review, security analysis, and implementation:
+
+- **Nemotron 3 Ultra** (NVIDIA) — Architecture review, security hardening, constant-time verification
+- **OWL Alpha** (ZOO Company) — Security audit, side-channel analysis, DFR assessment
+- **Hy3 (Tencent)** — Code review, optimization suggestions, steganographic encoding review
+- **Ling-3.0-flash** (Ling) — Documentation review, API design feedback
+- **Qwen Coder** (Alibaba) — Code review, Rust implementation details, testing strategies
+
+Special thanks to the QC-MDPC and BIKE research communities for foundational work on post-quantum code-based cryptography.
+
+---
+
 ## Authors
 
 - Developer: notareal1
