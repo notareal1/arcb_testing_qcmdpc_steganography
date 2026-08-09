@@ -139,7 +139,7 @@ Result: PASS (no timing leak detected)
 ## Repository
 
 ```
-https://github.com/notareal1/arcb_testing_qcmdpc_stenography
+https://github.com/notareal1/arcb_testing_qcmdpc_steganography
 ```
 
 ### Build Commands

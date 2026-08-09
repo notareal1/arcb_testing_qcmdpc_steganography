@@ -774,7 +774,7 @@ Result: PASS (no timing leak detected)
 
 ```bash
 # Clone
-git clone https://github.com/notareal1/arcb_testing_qcmdpc_stenography
+git clone https://github.com/notareal1/arcb_testing_qcmdpc_steganography
 cd ARCB_trapdoor
 
 # Build release (optimized)
