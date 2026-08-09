@@ -1,21 +1,21 @@
 # ARCB-SteganoTrapdoor v5.13 — Final Report
 
-## Tổng kết
+## Summary
 
-**ARCB v5.13** là phiên bản bảo mật đã được củng cố (security-hardened) với:
-- **Fixed-latency decoder** (loại bỏ timing leak từ early convergence)
-- **Steganographic uniformity** (rejection sampling + χ² test, phân bố số 0-9 thống kê đồng đều)
-- **Constant-time decapsulate** (không early returns, tất cả path thực thi identical)
-- **Zeroization** buffer tạm chứa secret
-- **Trapping set detection** nâng cao trong KeyGen
+**ARCB v5.13** is a security-hardened release featuring:
+- **Fixed-latency decoder** (eliminates timing leak from early convergence)
+- **Steganographic uniformity** (rejection sampling + χ² test, statistically uniform 0-9 digit distribution)
+- **Constant-time decapsulate** (no early returns, all paths execute identically)
+- **Zeroization** of temporary secret buffers
+- **Enhanced trapping set detection** in KeyGen
 - **DFR_TRIALS 270** + **girth ≥ 8** + **trapping set check** = defense in depth
 
 ---
 
-## Thông số kỹ thuật
+## Technical Parameters
 
-| Tham số | Giá trị | Mô tả |
-|---------|---------|-------|
+| Parameter | Value | Description |
+|-----------|-------|-------------|
 | M | 16384 | Code length parameter |
 | w (ROW_WEIGHT) | 45 | Row weight |
 | t (ERROR_WEIGHT) | 134 | Error weight |
@@ -32,24 +32,24 @@
 
 ---
 
-## Các lỗ hổng đã fix (v5.12 → v5.13)
+## Vulnerabilities Fixed (v5.12 → v5.13)
 
-### Critical (Bảo mật)
+### Critical (Security)
 
 1. **Cache Timing in decoder early convergence** — `work_mask` neutralizes all suspect/flip/gray_count computation after convergence → fixed-latency
 2. **Error Oracle in stego decapsulate** — early returns on invalid input/tag mismatch → fully CT: all paths execute, mask result
-3. **Steganographic pattern leakage** — 43% large digits (8-9) vs 20% uniform → rejection sampling + χ² test (p > 0.05)
+3. **Steganographic pattern leakage** — 43% large digits (8-9) vs 20% uniform target → rejection sampling + χ² test (p > 0.05)
 4. **Missing zeroization** in `generate_error()` — Vec<u8>/Vec<usize> now zeroized
 5. **debug_assert in production crypto path** — replaced with runtime `assert!`
 
-### High (Hiệu năng & Quality)
+### High (Performance & Quality)
 
 6. **Incomplete trapping set detection** — now checks (2,b≥3), (3,b≤4), cross-half
 7. **DFR_TRIALS 100 → 270** — P(miss 5% DFR key) = 0.95^270 ≈ 0.0008%
 8. **Girth check 6 → 8** — stricter cycle detection
 9. **Non-CT syndrome in keygen** — already optimized, confirmed safe
 
-### Medium (Code quality)
+### Medium (Code Quality)
 
 10. **Runtime assert** instead of `debug_assert!` for `ERROR_WEIGHT` check
 11. **EncodingError** variant added to `ArcError`
@@ -63,15 +63,15 @@
 
 | Test | Status | Evidence |
 |------|--------|----------|
-| Fixed-latency decoder | ✅ PASS | `work_mask=0` masks suspect/flip/gray_count after convergence |
-| Chi-squared detects LCG non-uniform | ✅ PASS | χ²=28.28 > 16.92 threshold |
-| Non-uniform rejection (old bias) | ✅ PASS | χ²=4321.68 >> threshold |
+| Fixed-latency decoder | ✅ PASS | `work_mask=0x00` masks suspect/flip/gray_count after convergence |
+| Chi-squared uniformity test | ✅ PASS | χ²=28.28 rejects LCG non-uniform |
 | CT input validation | ✅ PASS | Bitwise mask, no early returns |
 | Zeroization of secret buffers | ✅ PASS | `bits.zeroize()`, `pos.zeroize()` |
-| Trapping set detection | ✅ PASS | (2,b) & (3,b) detected, good poly clean |
-| Runtime assert active | ✅ PASS | `assert!` fires in production |
+| Runtime assert | ✅ PASS | `ERROR_WEIGHT<=2*M` enforced |
+| Trapping set detection | ✅ PASS | (2,b≥3) and (3,b≤4) detected, good poly clean |
+| Cargo check | ✅ PASS | Library compiles without warnings |
 
-### Dudect CT Verification (Historical)
+### Constant-Time Verification (Historical Dudect)
 
 ```
 bench ct_bytes_equal : max t = -65.80, max tau = -4.99, (5/tau)^2 = 1
@@ -195,6 +195,11 @@ winget install BrechtSanders.WinLibs.POSIX.UCRT
 - [ ] Hardware security module (HSM) integration
 - [ ] Formal verification (HACL*/Fiat-Crypto)
 - [ ] Side-channel evaluation (TVLA)
+
+### Research Directions
+- [ ] Higher-order masking (DPA protection)
+- [ ] QC-LDPC decoder (faster convergence)
+- [ ] Neural network-assisted parameter tuning
 
 ---
 
