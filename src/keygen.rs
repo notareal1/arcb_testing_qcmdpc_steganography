@@ -140,49 +140,79 @@ fn has_small_trapping_sets(h0: &Polynomial, h1: &Polynomial) -> bool {
     let ones_h0: Vec<usize> = (0..M).filter(|&p| h0.get_bit(p) == 1).collect();
     let ones_h1: Vec<usize> = (0..M).filter(|&p| h1.get_bit(p) == 1).collect();
     
-    // Build adjacency: variable node v connects to check nodes at shifts of ones
-    // For circulant structure: check node c connects to variables at (c + p) % M for p in ones
+    // Check both halves for trapping sets
+    if check_trapping_sets_half(&ones_h0, h0) || check_trapping_sets_half(&ones_h1, h1) {
+        return true;
+    }
     
-    // Quick check: any pair of variable nodes sharing >= 3 check nodes? (indicates 4-cycle or small TS)
-    // This is O(w^2) = 45^2 = 2025 operations - very fast
-    let max_shared_checks = 3; // 4-cycle = share 2 checks; trapping sets often share >=3
+    // Cross-check between halves
+    if check_cross_trapping_sets(&ones_h0, h1) {
+        return true;
+    }
     
-    // Check h0 half
-    for i in 0..ones_h0.len() {
-        for j in (i + 1)..ones_h0.len() {
-            let p1 = ones_h0[i];
-            let p2 = ones_h0[j];
+    false
+}
+
+/// Check trapping sets within a single circulant half.
+/// Looks for (a,b) configurations where a variables share b check nodes.
+fn check_trapping_sets_half(ones: &[usize], poly: &Polynomial) -> bool {
+    let w = ones.len();
+    
+    // Build adjacency: for each variable node position, which check nodes it connects to
+    // Variable at position v connects to check nodes at (v - p) % M for p in ones
+    // Equivalently: check node c connects to variables at (c + p) % M for p in ones
+    
+    // For each pair of variable nodes, count shared check nodes
+    // This detects (2,b) configurations
+    for i in 0..w {
+        for j in (i + 1)..w {
+            let p1 = ones[i];
+            let p2 = ones[j];
             
-            // Count shared check nodes between variable nodes p1 and p2
-            // Variable v connects to checks at (v - p) % M for p in ones
-            // So checks shared = |ones ∩ (ones + p1 - p2)| mod M
             let shift = (M + p1 - p2) % M;
             let mut shared = 0;
-            for &p in &ones_h0 {
+            for &p in ones {
                 let target = (p + shift) % M;
-                if h0.get_bit(target) == 1 {
+                if poly.get_bit(target) == 1 {
                     shared += 1;
-                    if shared >= max_shared_checks {
-                        return true; // Found small trapping set structure
-                    }
                 }
+            }
+            
+            // (2,b) trapping set: 2 variable nodes sharing b check nodes
+            // b=2 is a 4-cycle (already caught by girth check)
+            // b>=3 indicates small trapping set
+            if shared >= 3 {
+                return true;
             }
         }
     }
     
-    // Check h1 half (same logic)
-    for i in 0..ones_h1.len() {
-        for j in (i + 1)..ones_h1.len() {
-            let p1 = ones_h1[i];
-            let p2 = ones_h1[j];
-            
-            let shift = (M + p1 - p2) % M;
-            let mut shared = 0;
-            for &p in &ones_h1 {
-                let target = (p + shift) % M;
-                if h1.get_bit(target) == 1 {
-                    shared += 1;
-                    if shared >= max_shared_checks {
+    // Check for (3,b) trapping sets - 3 variable nodes with few odd-degree checks
+    // This is more expensive but catches the most dangerous TS
+    if w <= 45 {
+        for i in 0..w {
+            for j in (i + 1)..w {
+                for k in (j + 1)..w {
+                    // Check how many check nodes have odd degree among these 3 variables
+                    // A check node has odd degree if it connects to 1 or 3 of these variables
+                    let mut odd_checks = 0;
+                    
+                    // For each check node, count connections to our 3 variables
+                    for c in 0..M {
+                        let mut connections = 0;
+                        for &p in &[ones[i], ones[j], ones[k]] {
+                            let target = (c + p) % M;
+                            if poly.get_bit(target) == 1 {
+                                connections += 1;
+                            }
+                        }
+                        if connections % 2 == 1 {
+                            odd_checks += 1;
+                        }
+                    }
+                    
+                    // (3,b) with b <= 4 is dangerous for BGF
+                    if odd_checks <= 4 {
                         return true;
                     }
                 }
@@ -190,24 +220,28 @@ fn has_small_trapping_sets(h0: &Polynomial, h1: &Polynomial) -> bool {
         }
     }
     
-    // Cross-check: variable in h0 half sharing checks with variable in h1 half
-    // This is less common but possible in the combined [H0 | H1] matrix
-    for &p1 in &ones_h0 {
+    false
+}
+
+/// Check cross-trapping sets between h0 and h1 halves.
+fn check_cross_trapping_sets(ones_h0: &[usize], h1: &Polynomial) -> bool {
+    // Variable in h0 connecting to checks in h1
+    let ones_h1: Vec<usize> = (0..M).filter(|&p| h1.get_bit(p) == 1).collect();
+    for &p1 in ones_h0 {
         for &p2 in &ones_h1 {
             let shift = (M + p1 - p2) % M;
             let mut shared = 0;
-            for &p in &ones_h0 {
+            for &p in ones_h0 {
                 let target = (p + shift) % M;
                 if h1.get_bit(target) == 1 {
                     shared += 1;
-                    if shared >= max_shared_checks {
-                        return true;
-                    }
                 }
+            }
+            if shared >= 3 {
+                return true;
             }
         }
     }
-    
     false
 }
 

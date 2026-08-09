@@ -23,6 +23,9 @@ pub enum ArcError {
     #[error("Stego error: {0}")]
     StegoError(String),
 
+    #[error("Encoding error: {0}")]
+    EncodingError(String),
+
     #[error("Encryption error: {0}")]
     EncryptionError(String),
 

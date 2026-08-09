@@ -18,6 +18,7 @@ use crate::utils;
 use blake3;
 use rand::rngs::OsRng;
 use rand::Rng;
+use zeroize::Zeroize;
 
 #[derive(Clone)]
 pub struct KemCiphertext {
@@ -125,7 +126,8 @@ fn decapsulate_with_polys(
 }
 
 fn generate_error() -> (Polynomial, Polynomial) {
-    debug_assert!(ERROR_WEIGHT <= 2 * M);
+    // Use proper check instead of debug_assert for production
+    assert!(ERROR_WEIGHT <= 2 * M, "ERROR_WEIGHT exceeds maximum");
     let mut rng = OsRng;
     let mut bits = vec![0u8; 2 * M];
     let mut pos: Vec<usize> = (0..2 * M).collect();
@@ -134,10 +136,14 @@ fn generate_error() -> (Polynomial, Polynomial) {
         pos.swap(i, j);
         bits[pos[i]] = 1;
     }
-    (
-        Polynomial::from_bits(&bits[..M]).unwrap(),
-        Polynomial::from_bits(&bits[M..]).unwrap(),
-    )
+    let e0 = Polynomial::from_bits(&bits[..M]).unwrap();
+    let e1 = Polynomial::from_bits(&bits[M..]).unwrap();
+    
+    // Zeroize temporary buffer containing secret error pattern
+    bits.zeroize();
+    pos.zeroize();
+    
+    (e0, e1)
 }
 
 #[cfg(test)]
