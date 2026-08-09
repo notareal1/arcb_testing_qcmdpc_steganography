@@ -167,7 +167,8 @@ impl Polynomial {
         result
     }
 
-    /// Multiply in R = GF(2)[x]/(x^M - 1) — fast non-constant-time version.
+    /// Multiply in R = GF(2)[x]/(x^M - 1) — constant-time version.
+    /// Uses scan-all pattern to avoid secret-dependent memory access.
     pub fn multiply(&self, other: &Self) -> Polynomial {
         let (a, b) = if self.weight() <= other.weight() {
             (self, other)
@@ -175,10 +176,18 @@ impl Polynomial {
             (other, self)
         };
         let mut result = Polynomial::zero();
-        for pos in a.positions_of_ones() {
-            let shifted = cyclic_shift_bytes(b.as_bytes(), pos);
+    
+        // CT: scan all bit positions, conditionally XOR shifted b
+        for pos in 0..M {
+            let bit_val = a.get_bit(pos) as u8;
+            let do_xor = bit_val.wrapping_neg(); // 0xFF if bit=1, 0 if bit=0
+        
+            // CT shift using scan-all pattern
+            let shifted = cyclic_shift_bytes_ct(b.as_bytes(), pos);
+        
+            // Conditional XOR with mask
             for i in 0..PUBKEY_BYTES {
-                result.data[i] ^= shifted[i];
+                result.data[i] ^= shifted[i] & do_xor;
             }
         }
         result
@@ -203,7 +212,7 @@ impl Polynomial {
     pub fn cyclic_shift(&self, shift: usize) -> Polynomial {
         let shift_mod = shift % M;
         if shift_mod == 0 { return self.clone(); }
-        let result = cyclic_shift_bytes(&self.data, shift_mod);
+        let result = cyclic_shift_bytes_ct(&self.data, shift_mod);
         Polynomial { data: result }
     }
     /// Inversion in R = GF(2)[x]/(x^M - 1) via extended Euclidean algorithm.
