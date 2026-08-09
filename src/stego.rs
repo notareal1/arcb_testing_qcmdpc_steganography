@@ -94,8 +94,8 @@ pub fn encapsulate_stego_with_message(
             }
         }
 
-        // Pack mask + payload into decimal digits using BALANCED encoding
-        let digits = encode_balanced_digits(&mask0, &mask1, &payload_bits, &mut rng)?;
+        // Pack mask + payload into decimal digits using UNIFORM encoding
+        let digits = encode_uniform_digits(&mask0, &mask1, &payload_bits, &mut rng)?;
 
         // Verify statistical uniformity (chi-squared test)
         if is_digit_distribution_uniform(&digits) {
@@ -110,84 +110,69 @@ pub fn encapsulate_stego_with_message(
 }
 
 /// Encode mask bits + payload bits into uniform 0-9 digits.
-/// Uses a balanced lookup table to achieve near-uniform distribution.
-fn encode_balanced_digits(
+/// Uses balanced mapping: each digit 0-9 carries ~3.32 bits (log2(10)).
+/// For each mask bit, we use payload bits to select a uniform digit.
+fn encode_uniform_digits(
     mask0: &Polynomial,
     mask1: &Polynomial,
     payload_bits: &[u8],
     rng: &mut OsRng,
 ) -> Result<Vec<u8>, ArcError> {
-    // Balanced encoding table: (mask_bit, payload_bits) -> digit
-    // Designed so each digit 0-9 appears with ~10% probability
-    // when mask bits are 50% 0 and 50% 1, and payload bits are uniform.
-    
-    // For mask=0 (50%): we have up to 3 payload bits -> 8 combinations
-    // For mask=1 (50%): we have up to 1 payload bit -> 2 combinations
-    // Total: 10 combinations, map to digits 0-9
-    
-    // Mapping strategy:
-    // mask=0 + 3 payload bits (0-7) -> digits 0-7 (8 values)
-    // mask=1 + 1 payload bit (0-1) -> digits 8-9 (2 values)
-    // This is the original scheme (50% small, 50% large).
+    // Uniform encoding strategy:
+    // We have 32768 mask bits (50% 0, 50% 1 from random codeword)
+    // Each mask bit + payload chunk maps to a uniform digit 0-9
     // 
-    // For UNIFORM distribution, we need to spread mask=0 across ALL digits 0-9.
-    // We do this by using payload bits to select digit from 0-9 regardless of mask.
-    // But we must preserve enough capacity for payload.
+    // Capacity: log2(10) ≈ 3.32 bits per digit
+    // Total capacity: 37768 * 3.32 ≈ 125,000 bits ≈ 15.6 KB
+    // Payload max: 8000 bytes = 64,000 bits (well within capacity)
     //
-    // Capacity analysis:
-    // - 32768 mask bits, 50% = 16384 zeros, 16384 ones
-    // - Current: 3*16384 + 1*16384 = 65536 payload bits = 8192 bytes
-    // - Uniform target: each digit carries log2(10) ≈ 3.32 bits
-    // - Total capacity: 37768 * 3.32 ≈ 125,000 bits = 15,625 bytes
-    //
-    // We can ACHIEVE uniform AND increase capacity!
-    // New scheme: encode (mask_bit, payload_chunk) -> 2 digits (base-100) uniformly
+    // Encoding per position:
+    // - mask=0 (50%): we need to select from 10 digits uniformly
+    // - mask=1 (50%): same
+    // Use payload bits to drive uniform digit selection
     
-    // Simpler approach: Use balanced mapping per position with small capacity tradeoff
-    // For each mask bit position:
-    // - mask=0: use 2 payload bits -> 4 combinations, map to 4 digits (0,2,4,6)
-    // - mask=1: use 2 payload bits -> 4 combinations, map to 4 digits (1,3,5,7)
-    // - Remaining 2 digits (8,9) used for padding/rejection sampling
-    // This gives 2 bits per position = 65536 bits total (same as before)
-    // And uniform if we distribute correctly.
-    
-    // Actually, let's use the original scheme but with REJECTION SAMPLING on full stream
-    // This is simpler and maintains compatibility.
+    // We use a simple approach: accumulate payload bits and emit base-10 digits
+    // This is essentially arithmetic/base-10 encoding
     
     let mut digits = Vec::with_capacity(SUPERBLOCK_DIGITS);
-    let mut bit_idx: usize = 0;
-
-    // Encode mask region (2*M digits) with balanced mapping
+    let mut bit_idx = 0;
+    
+    // First, encode mask region (2*M digits) with uniform distribution
+    // We'll use payload bits to determine digits, with mask as additional entropy
     for i in 0..2 * M {
         let mask_bit = if i < M {
             mask0.get_bit(i)
         } else {
             mask1.get_bit(i - M)
         };
-
-        if mask_bit == 0 {
-            // Small digit (0-7): embed 3 payload bits
-            let mut val: u8 = 0;
-            for b in 0..3 {
-                let bit = if bit_idx < payload_bits.len() {
-                    payload_bits[bit_idx]
-                } else {
-                    rng.gen::<u8>() & 1
-                };
+        
+        // For each position, we generate a uniform digit 0-9
+        // using payload bits + mask_bit as entropy
+        let mut val = 0u8;
+        let mut bits_used = 0;
+        
+        // Collect bits until we have enough for a uniform 0-9 selection
+        // Need log2(10) ≈ 3.32 bits, so use 4 bits (16 values) with rejection
+        while val > 9 || bits_used < 4 {
+            if bit_idx < payload_bits.len() {
+                val = (val << 1) | payload_bits[bit_idx];
                 bit_idx += 1;
-                val |= bit << (2 - b);
-            }
-            digits.push(val);
-        } else {
-            // Large digit (8-9): embed 1 payload bit
-            let bit = if bit_idx < payload_bits.len() {
-                payload_bits[bit_idx]
             } else {
-                rng.gen::<u8>() & 1
-            };
-            bit_idx += 1;
-            digits.push(8 + bit);
+                val = (val << 1) | (rng.gen::<u8>() & 1);
+            }
+            bits_used += 1;
+            if bits_used >= 4 && val <= 9 {
+                break;
+            } else if bits_used >= 4 && val > 9 {
+                // Rejection: try again with fresh bits
+                val = 0;
+                bits_used = 0;
+            }
         }
+        
+        // Mix in mask bit for domain separation (doesn't affect uniformity)
+        val = (val + (mask_bit as u8) * 5) % 10;
+        digits.push(val);
     }
 
     // Padding region: fill with uniform random 0-9
@@ -307,19 +292,21 @@ pub fn decapsulate_stego(seed: &[u8; SEED_BYTES], digits: &[u8]) -> Result<Vec<u
     }
 
     // Extract payload bits from first 2*M digits (always run)
-    let mut payload_bits = Vec::with_capacity(2 * M * 3);
+    // New uniform encoding: val = (4_payload_bits_with_rejection + mask_bit * 5) % 10
+    // To decode: val' = (val - mask_bit * 5) % 10, then extract 4 bits
+    let mut payload_bits = Vec::with_capacity(2 * M * 4);
     for i in 0..2 * M {
         if i < digits.len() {
             let d = digits[i];
             let mask_bit = (d > 7) as u8;
             mask_bits[i] = mask_bit;
-            if mask_bit == 0 {
-                payload_bits.push((d >> 2) & 1);
-                payload_bits.push((d >> 1) & 1);
-                payload_bits.push(d & 1);
-            } else {
-                payload_bits.push(d - 8);
-            }
+            // Reverse the encoding: val = (d + 10 - (mask_bit * 5) % 10) % 10
+            let encoded_val = (d as u8 + 10 - ((mask_bit * 5) % 10)) % 10;
+            // Extract 4 bits from encoded_val (0-9)
+            payload_bits.push((encoded_val >> 3) & 1);
+            payload_bits.push((encoded_val >> 2) & 1);
+            payload_bits.push((encoded_val >> 1) & 1);
+            payload_bits.push(encoded_val & 1);
         }
     }
 
@@ -471,11 +458,10 @@ mod tests {
         let large_pct = 100.0 * total_large as f64 / total as f64;
         eprintln!("Total: {} large out of {} ({:.1}%)", total_large, total, large_pct);
         
-        // Mask region has ~0.4% large (ERROR_WEIGHT/2M = 134/32768)
-        // Padding region has ~0.3% large (minimal, to fine-tune balance)
-        // Overall target: ~34% (mask 50% diluted by small padding)
-        assert!(large_pct > 40.0, "Large digit percentage too low: {:.1}%, expected ~34%", large_pct);
-        assert!(large_pct < 50.0, "Large digit percentage too high: {:.1}%, expected ~34%", large_pct);
+        // New uniform encoding: ~10% large (8-9) expected
+        // Chi-squared test should pass
+        assert!(large_pct > 8.0, "Large digit percentage too low: {:.1}%, expected ~10%", large_pct);
+        assert!(large_pct < 12.0, "Large digit percentage too high: {:.1}%, expected ~10%", large_pct);
     }
 
     fn test_superblock_size() {
