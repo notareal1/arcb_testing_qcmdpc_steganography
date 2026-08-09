@@ -271,7 +271,12 @@ pub fn check_girth(poly: &crate::polynomial::Polynomial, min_girth: usize) -> bo
                 let p4 = (ones[i] + ones[j] + M - ones[k]) % M;
                 // CT lookup: ones_bitset[p4] is 0 or 1
                 let in_set = ones_bitset[p4] as u8;
-                let is_4cycle = (p4 != ones[i] && p4 != ones[j] && p4 != ones[k] && in_set == 1) as u8;
+                // Use bitwise AND instead of short-circuit && to avoid timing leak
+                let cond1 = (p4 != ones[i]) as u8;
+                let cond2 = (p4 != ones[j]) as u8;
+                let cond3 = (p4 != ones[k]) as u8;
+                let cond4 = (in_set == 1) as u8;
+                let is_4cycle = cond1 & cond2 & cond3 & cond4;
                 has_4cycle |= is_4cycle;
             }
         }

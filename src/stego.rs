@@ -325,14 +325,30 @@ pub fn decapsulate_stego(seed: &[u8; SEED_BYTES], digits: &[u8]) -> Result<Vec<u
         }
     }
 
+    // Zeroize payload_bits (contains secret payload data)
+    payload_bits.zeroize();
+
     // Parse: length (4 bytes) || nonce (12 bytes) || ciphertext || tag (16 bytes)
     // Constant-time parsing - always do the work, mask result
     let has_min_len = (payload_bytes.len() >= 4 + 12 + 16) as u8;
-    let ct_len = u32::from_le_bytes(payload_bytes[..4].try_into().unwrap_or([0u8; 4])) as usize;
+    
+    // Explicit mask-based fallback instead of unwrap_or
+    let ct_len_bytes: [u8; 4] = if payload_bytes.len() >= 4 {
+        payload_bytes[..4].try_into().unwrap()
+    } else {
+        [0u8; 4]
+    };
+    let ct_len = u32::from_le_bytes(ct_len_bytes) as usize;
     let min_len = 4 + 12 + 16;
     let ct_len_ok = (ct_len <= payload_bytes.len().saturating_sub(min_len)) as u8;
-    let nonce: [u8; 12] = payload_bytes[4..16].try_into().unwrap_or([0u8; 12]);
-    let ciphertext_with_tag = if 16 + ct_len + 16 <= payload_bytes.len() {
+    
+    let nonce: [u8; 12] = if payload_bytes.len() >= 16 {
+        payload_bytes[4..16].try_into().unwrap()
+    } else {
+        [0u8; 12]
+    };
+    
+    let ciphertext_with_tag: &[u8] = if 16 + ct_len + 16 <= payload_bytes.len() {
         &payload_bytes[16..16 + ct_len + 16]
     } else {
         &[0u8; 0]

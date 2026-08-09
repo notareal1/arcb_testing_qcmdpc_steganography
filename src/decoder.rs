@@ -1,6 +1,6 @@
-// decoder.rs -- ARCB v5.12 (Production)
+// decoder.rs -- ARCB v5.14 (Production)
 // BGF decoder for QC-MDPC syndrome decoding.
-// M=16384, w=45, t=134, MAX_ITER=12
+// M=16384, w=45, t=134, MAX_ITER=15
 //
 // CT suspect computation: scan-all 256 words with bitwise equality
 // to select values. ones_h0/ones_h1 are SECRET key positions, so
@@ -15,13 +15,6 @@ use crate::matrix::Circulant;
 use crate::matrix::NUM_WORDS;
 use crate::parameters::*;
 use crate::polynomial::Polynomial;
-
-const T_BLACK_INIT: u8 = 40;
-const T_BLACK_FINAL: u8 = 20;
-const T_GRAY_INIT: u8 = 30;
-const T_GRAY_FINAL: u8 = 12;
-const GRAY_COUNT_MIN: u16 = 2;
-const BLACK_ONLY_ITERS: usize = 7;
 
 pub fn decode(
     target: &Polynomial, h0: &Circulant, h1: &Circulant,
@@ -203,7 +196,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_decode_t134_dfr() {
         let seed = [0xABu8; SEED_BYTES];
         let (h0p, h1p) = utils::derive_secret_polynomials(&seed).unwrap();
