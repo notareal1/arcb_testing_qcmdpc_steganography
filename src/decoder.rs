@@ -8,6 +8,7 @@
 //
 // Security: constant-time syndrome, CT convergence check, branchless
 // key selection, zeroize temp buffers.
+// FIXED-LATENCY: All iterations perform identical work regardless of convergence.
 
 use crate::matrix::bytes_to_words;
 use crate::matrix::Circulant;
@@ -48,11 +49,14 @@ pub fn decode(
         let match_flag: u8 = s_curr.ct_bytes_equal(target) as u8;
         converged_mask = converged_mask | match_flag.wrapping_neg();
 
+        // Work mask: 0xFF if still working, 0x00 if converged (neutralize all updates)
+        let work_mask: u8 = !converged_mask;
+
         // Compute diff (suppressed if converged — branchless)
         let diff = s_curr.xor(target);
         let mut diff_bytes = *diff.as_bytes();
         for i in 0..PUBKEY_BYTES {
-            diff_bytes[i] &= !converged_mask;
+            diff_bytes[i] &= work_mask;
         }
 
         // Convert diff_bytes to word-level for fast bit extraction.
@@ -78,7 +82,8 @@ pub fn decode(
                 }
                 count = count.wrapping_add((word_val >> target_bit_pos) as u8 & 1);
             }
-            suspect[j] = count;
+            // Neutralize suspect when converged (mask with work_mask)
+            suspect[j] = count & work_mask;
         }
 
         // Compute suspect counts for h1 half.
@@ -97,17 +102,17 @@ pub fn decode(
                 }
                 count = count.wrapping_add((word_val >> target_bit_pos) as u8 & 1);
             }
-            suspect[M + j] = count;
+            suspect[M + j] = count & work_mask;
         }
 
-        // Flip bits based on BGF rules (branchless flip)
+        // Flip bits based on BGF rules (branchless flip, masked by work_mask)
         let use_gray = iter >= BLACK_ONLY_ITERS;
         for j in 0..M {
-            flip_bgf(&mut e0, &mut gray_count, j, j, suspect[j], t_black, t_gray, GRAY_COUNT_MIN, use_gray);
+            flip_bgf(&mut e0, &mut gray_count, j, j, suspect[j], t_black, t_gray, GRAY_COUNT_MIN, use_gray, work_mask);
         }
         for j in 0..M {
             let s = M + j;
-            flip_bgf(&mut e1, &mut gray_count, j, s, suspect[s], t_black, t_gray, GRAY_COUNT_MIN, use_gray);
+            flip_bgf(&mut e1, &mut gray_count, j, s, suspect[s], t_black, t_gray, GRAY_COUNT_MIN, use_gray, work_mask);
         }
     }
 
@@ -134,6 +139,7 @@ fn flip_bgf(
     t_gray: u8,
     gray_count_min: u16,
     use_gray: bool,
+    work_mask: u8,
 ) {
     let sus = suspect as u64;
     let gc = gray_count[gray_idx] as u64;
@@ -149,10 +155,10 @@ fn flip_bgf(
     let black_flip = ge_tb;
     let use_gray_mask = if use_gray { !0u64 } else { 0u64 };
     let gray_flip = use_gray_mask & gc_ok & ge_tg & lt_tb;
-    let flip_mask = black_flip | gray_flip;
+    let flip_mask = (black_flip | gray_flip) & (work_mask as u64);
 
     e.flip_bit_ct(bit_idx, (flip_mask & 1) as u8);
-    let in_gray_or_flip = flip_mask | (ge_tg & use_gray_mask);
+    let in_gray_or_flip = (flip_mask | (ge_tg & use_gray_mask)) & (work_mask as u64);
     gray_count[gray_idx] = ((gc + 1) * in_gray_or_flip) as u16;
 }
 
