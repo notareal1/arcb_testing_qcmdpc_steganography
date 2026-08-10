@@ -1,13 +1,15 @@
-# ARCB-SteganoTrapdoor v5.13 — Final Report
+# ARCB-SteganoTrapdoor v5.14 — Final Report
 
 ## Summary
 
-**ARCB v5.13** is a security-hardened release featuring:
+**ARCB v5.14** is a security-hardened release featuring:
 - **Fixed-latency decoder** (eliminates timing leak from early convergence)
-- **Steganographic uniformity** (rejection sampling + χ² test, statistically uniform 0-9 digit distribution)
+- **Steganographic uniformity** (16-bit modulo encoding bias 0.015% + χ² test, statistically uniform 0-9 digit distribution)
 - **Constant-time decapsulate** (no early returns, all paths execute identically)
-- **Zeroization** of temporary secret buffers
+- **Zeroization** of temporary secret buffers (fixed double-zeroize bug)
 - **Enhanced trapping set detection** in KeyGen
+- **Integer overflow protection** in payload parsing
+- **Bounded CT rejection sampling** in position selection
 - **DFR_TRIALS 270** + **girth ≥ 8** + **trapping set check** = defense in depth
 
 ---
@@ -29,6 +31,22 @@
 | Girth check | ≥ 8 | Trapping set / cycle detection |
 | Security (classical) | ~196-bit | NIST Level 3-5 |
 | Security (quantum) | ~98-bit | Quantum security |
+
+---
+
+## Vulnerabilities Fixed (v5.13 → v5.14)
+
+### Critical (Security)
+
+1. **Zeroization bug in stego decapsulate** — `mask_bits` zeroized then re-written with secret data → separate `payload_mask_bits` buffer
+2. **Integer overflow in payload parsing** — attacker-controlled `ct_len` could overflow `16 + ct_len + 16` → `safe_ct_len = ct_len.min(MAX_PAYLOAD_BYTES)` with explicit bounds check
+3. **Rejection sampling timing leak** — variable-iteration `while` loops in `encode_uniform_digits` and `positions_to_poly` → fixed 16-bit modulo + bounded 10-iteration CT mask
+4. **CT `check_girth` secret-dependent indexing** — `get_bit(p)` with secret indices → precomputed `poly_bits[M]` array
+
+### High (Quality)
+
+5. **Code formatting** — `rustfmt` applied across all source files
+6. **Documentation** — SECURITY_AUDIT.md and FINAL_REPORT updated to v5.14
 
 ---
 
@@ -59,16 +77,18 @@
 
 ## Test Results
 
-### Ad-hoc Verification (7/7 PASS)
+### Ad-hoc Verification (8/8 PASS)
 
 | Test | Status | Evidence |
 |------|--------|----------|
 | Fixed-latency decoder | ✅ PASS | `work_mask=0x00` masks suspect/flip/gray_count after convergence |
 | Chi-squared uniformity test | ✅ PASS | χ²=28.28 rejects LCG non-uniform |
 | CT input validation | ✅ PASS | Bitwise mask, no early returns |
-| Zeroization of secret buffers | ✅ PASS | `bits.zeroize()`, `pos.zeroize()` |
+| Zeroization of secret buffers | ✅ PASS | `bits.zeroize()`, `pos.zeroize()`, separate payload buffers |
 | Runtime assert | ✅ PASS | `ERROR_WEIGHT<=2*M` enforced |
 | Trapping set detection | ✅ PASS | (2,b≥3) and (3,b≤4) detected, good poly clean |
+| Integer overflow protection | ✅ PASS | `safe_ct_len = ct_len.min(MAX_PAYLOAD_BYTES)` |
+| Bounded rejection sampling | ✅ PASS | 10 iterations CT mask in `positions_to_poly` |
 | Cargo check | ✅ PASS | Library compiles without warnings |
 
 ### Constant-Time Verification (Historical Dudect)
@@ -85,7 +105,7 @@ Result: PASS (no timing leak detected)
 
 ---
 
-## Security Architecture (v5.13)
+## Security Architecture (v5.14)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -97,11 +117,12 @@ Result: PASS (no timing leak detected)
 │  • Zeroize on drop (secret material cleanup)                │
 │  • black_box(do_xor) (prevent compiler optimization)        │
 │  • Trapping set detection in KeyGen                         │
-│  • Girth check ≥ 8                                          │
+│  • Girth check ≥ 8 (CT: precomputed bit array)              │
 │  • DFR_TRIALS = 270                                         │
-│  • Stego: rejection sampling + χ² uniformity test           │
+│  • Stego: 16-bit modulo encoding (no rejection loop)        │
 │  • Stego: constant-time decapsulate (no early returns)      │
 │  • Stego: implicit rejection + masked AES-GCM decrypt       │
+│  • Stego: integer overflow protection (safe_ct_len)         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -109,7 +130,7 @@ Result: PASS (no timing leak detected)
 
 ## Attack Vectors & Mitigations (Updated)
 
-| Attack | Complexity | Mitigation (v5.13) |
+| Attack | Complexity | Mitigation (v5.14) |
 |--------|------------|---------------------|
 | Information Set Decoding | ~2^196 | QC-MDPC parameters |
 | Quantum Grover | ~2^98 | Code distance |
@@ -118,8 +139,10 @@ Result: PASS (no timing leak detected)
 | Timing side-channel (stego) | N/A | CT validation + masked paths |
 | GJS reaction attack | ~2^196 | FO + DFR=270 + trapping set + girth 8 |
 | Fault injection | N/A | FO transform (implicit rejection) |
-| Steganalysis (chi-square) | N/A | Rejection sampling (uniform digits) |
+| Steganalysis (chi-square) | N/A | Modulo encoding (uniform digits) |
 | Error oracle (timing) | N/A | CT decapsulate, always decrypt + mask |
+| Integer overflow (payload) | N/A | `safe_ct_len` bounds check |
+| Zeroization bypass | N/A | Separate buffers, proper zeroize |
 
 ---
 
@@ -131,7 +154,7 @@ Result: PASS (no timing leak detected)
 | Key Generation (production) | ~120s | DFR_TRIALS=270 + trapping set + girth 8 |
 | KEM Encapsulate | ~0.5s | CT multiply + syndrome |
 | KEM Decapsulate | ~30s | CT syndrome + 15 BGF iterations |
-| Stego Encode | ~1-5s | KEM + AES-GCM + packing + rejection sampling (1-100 attempts) |
+| Stego Encode | ~1-5s | KEM + AES-GCM + packing + modulo encoding |
 | Stego Decode | ~30s | KEM decaps + AES-GCM + unpacking |
 
 ---
@@ -171,18 +194,15 @@ winget install BrechtSanders.WinLibs.POSIX.UCRT
 
 ## Roadmap
 
-### v5.13 (Current) — Security Hardening ✅
-- ✅ Fixed-latency decoder (work_mask)
-- ✅ Steganographic uniformity (rejection sampling + χ² test)
-- ✅ Constant-time decapsulate (no early returns)
-- ✅ Zeroization of temporary buffers
-- ✅ Enhanced trapping set detection (2,b + 3,b + cross)
-- ✅ Girth check 6→8
-- ✅ DFR_TRIALS 100→270
-- ✅ Runtime assert instead of debug_assert
-- ✅ EncodingError variant
+### v5.14 (Current) — Security Hardening ✅
+- ✅ Fixed zeroization bug: separate `payload_mask_bits` buffer
+- ✅ Integer overflow protection: `safe_ct_len = ct_len.min(MAX_PAYLOAD_BYTES)`
+- ✅ Bounded CT rejection sampling: 10-iteration mask in `positions_to_poly`
+- ✅ CT `check_girth`: precomputes `poly_bits[M]` array
+- ✅ CT stego encoding: fixed 16-bit modulo (no rejection loop)
+- ✅ `rustfmt` cleanup across all source files
 
-### v5.14 (Next) — Performance
+### v5.15 (Next) — Performance
 - [ ] SIMD (AVX2) for CT gather
 - [ ] Reduce MAX_ITER to 10 (with DFR verification)
 - [ ] Optimize polynomial multiplication
@@ -200,6 +220,16 @@ winget install BrechtSanders.WinLibs.POSIX.UCRT
 - [ ] Higher-order masking (DPA protection)
 - [ ] QC-LDPC decoder (faster convergence)
 - [ ] Neural network-assisted parameter tuning
+
+---
+
+## Lessons Learned (v5.13 → v5.14)
+
+1. **Zeroization must be final** — never re-write after `zeroize()`
+2. **Rejection sampling leaks timing** — use fixed-bit modulo or bounded CT loops
+3. **Integer overflow in parsing** — always bound attacker-controlled lengths
+4. **Secret-dependent array indexing** — precompute to array even in keygen
+5. **Separate buffers for separate purposes** — avoids accidental reuse
 
 ---
 
@@ -233,5 +263,5 @@ Special thanks to the QC-MDPC and BIKE research communities for foundational wor
 
 - Developer: notareal1
 - Reviewer: OWL (ZOO company)
-- Version: 5.13
+- Version: 5.14
 - Date: August 2026

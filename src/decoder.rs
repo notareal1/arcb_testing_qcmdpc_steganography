@@ -17,7 +17,9 @@ use crate::parameters::*;
 use crate::polynomial::Polynomial;
 
 pub fn decode(
-    target: &Polynomial, h0: &Circulant, h1: &Circulant,
+    target: &Polynomial,
+    h0: &Circulant,
+    h1: &Circulant,
 ) -> (Polynomial, Polynomial, bool) {
     let mut e0 = Polynomial::zero();
     let mut e1 = Polynomial::zero();
@@ -29,14 +31,22 @@ pub fn decode(
 
     for iter in 0..MAX_ITER {
         // Adaptive thresholds (integer linear interpolation, fully CT)
-        let denom = if MAX_ITER > 1 { (MAX_ITER - 1) as u64 } else { 1 };
+        let denom = if MAX_ITER > 1 {
+            (MAX_ITER - 1) as u64
+        } else {
+            1
+        };
         let t_black = (T_BLACK_INIT as u64
-            - ((T_BLACK_INIT as u64 - T_BLACK_FINAL as u64) * iter as u64) / denom) as u8;
+            - ((T_BLACK_INIT as u64 - T_BLACK_FINAL as u64) * iter as u64) / denom)
+            as u8;
         let t_gray = (T_GRAY_INIT as u64
-            - ((T_GRAY_INIT as u64 - T_GRAY_FINAL as u64) * iter as u64) / denom) as u8;
+            - ((T_GRAY_INIT as u64 - T_GRAY_FINAL as u64) * iter as u64) / denom)
+            as u8;
 
         // Compute syndrome — fully constant-time bitsliced version
-        let s_curr = h0.compute_syndrome_ct(&e0).add(&h1.compute_syndrome_ct(&e1));
+        let s_curr = h0
+            .compute_syndrome_ct(&e0)
+            .add(&h1.compute_syndrome_ct(&e1));
 
         // CT convergence check
         let match_flag: u8 = s_curr.ct_bytes_equal(target) as u8;
@@ -101,22 +111,50 @@ pub fn decode(
         // Flip bits based on BGF rules (branchless flip, masked by work_mask)
         let use_gray = iter >= BLACK_ONLY_ITERS;
         for j in 0..M {
-            flip_bgf(&mut e0, &mut gray_count, j, j, suspect[j], t_black, t_gray, GRAY_COUNT_MIN, use_gray, work_mask);
+            flip_bgf(
+                &mut e0,
+                &mut gray_count,
+                j,
+                j,
+                suspect[j],
+                t_black,
+                t_gray,
+                GRAY_COUNT_MIN,
+                use_gray,
+                work_mask,
+            );
         }
         for j in 0..M {
             let s = M + j;
-            flip_bgf(&mut e1, &mut gray_count, j, s, suspect[s], t_black, t_gray, GRAY_COUNT_MIN, use_gray, work_mask);
+            flip_bgf(
+                &mut e1,
+                &mut gray_count,
+                j,
+                s,
+                suspect[s],
+                t_black,
+                t_gray,
+                GRAY_COUNT_MIN,
+                use_gray,
+                work_mask,
+            );
         }
     }
 
     // Final convergence check (CT)
-    let s_final = h0.compute_syndrome_ct(&e0).add(&h1.compute_syndrome_ct(&e1));
+    let s_final = h0
+        .compute_syndrome_ct(&e0)
+        .add(&h1.compute_syndrome_ct(&e1));
     let final_ok: u8 = s_final.ct_bytes_equal(target) as u8;
     let any_ok = converged_mask | final_ok.wrapping_neg();
 
     // Zeroize temp buffers that contain syndrome-derived data
-    for v in gray_count.iter_mut() { *v = 0; }
-    for v in suspect.iter_mut() { *v = 0; }
+    for v in gray_count.iter_mut() {
+        *v = 0;
+    }
+    for v in suspect.iter_mut() {
+        *v = 0;
+    }
 
     (e0, e1, any_ok != 0)
 }
@@ -191,7 +229,10 @@ mod tests {
 
             let (d0, d1, converged) = decode(&s, &h0, &h1);
             assert!(converged, "t=1 trial {trial} (pos={j}) failed");
-            assert!(d0.equals(&e0) && d1.equals(&e1), "t=1 trial {trial} mismatch");
+            assert!(
+                d0.equals(&e0) && d1.equals(&e1),
+                "t=1 trial {trial} mismatch"
+            );
         }
     }
 
@@ -219,10 +260,15 @@ mod tests {
             let s = h0.compute_syndrome(&e0).add(&h1.compute_syndrome(&e1));
 
             let (d0, d1, converged) = decode(&s, &h0, &h1);
-            if converged && d0.equals(&e0) && d1.equals(&e1) { successes += 1; }
+            if converged && d0.equals(&e0) && d1.equals(&e1) {
+                successes += 1;
+            }
             eprintln!("t=134 trial {trial}: {}/{} successes", successes, trial + 1);
         }
         eprintln!("t=134 DFR: {successes}/{attempts} successes");
-        assert!(successes >= attempts * 8 / 10, "t=134: only {successes}/{attempts} successes");
+        assert!(
+            successes >= attempts * 8 / 10,
+            "t=134: only {successes}/{attempts} successes"
+        );
     }
 }

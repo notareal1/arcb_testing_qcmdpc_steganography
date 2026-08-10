@@ -85,6 +85,7 @@ fn decapsulate_with_polys(
     h1: &Circulant,
     ct: &KemCiphertext,
 ) -> Result<[u8; SESSION_KEY_BYTES], ArcError> {
+    // CT parsing of syndrome - returns zero polynomial on invalid input
     let s = Polynomial::from_bytes(&ct.syndrome);
     let s_prime = h0.compute_syndrome_ct(&s);
 
@@ -138,11 +139,11 @@ fn generate_error() -> (Polynomial, Polynomial) {
     }
     let e0 = Polynomial::from_bits(&bits[..M]).unwrap();
     let e1 = Polynomial::from_bits(&bits[M..]).unwrap();
-    
+
     // Zeroize temporary buffer containing secret error pattern
     bits.zeroize();
     pos.zeroize();
-    
+
     (e0, e1)
 }
 

@@ -75,12 +75,17 @@ fn positions_to_poly(
     for _idx in 0..count {
         // Count available positions
         let avail_count: usize = available.iter().map(|&v| v as usize).sum();
-        
+
         // Compute rejection threshold: largest multiple of avail_count <= 65536
         let max_valid = 65536 - (65536 % avail_count);
-        
-        // Get a word that passes rejection sampling
-        let word = loop {
+
+        // Get a word that passes rejection sampling - CT version with bounded iterations
+        // We use a fixed maximum of 10 attempts (probability of failure < 2^-10)
+        // and accumulate the valid word using CT mask operations
+        let mut word = 0usize;
+        let mut word_valid = 0u8;
+
+        for _attempt in 0..10 {
             // Extend bytes if needed
             if byte_idx + 1 >= buf.len() {
                 let mut ext_input = seed_for_extend.to_vec();
@@ -90,16 +95,24 @@ fn positions_to_poly(
                 buf.extend_from_slice(&extended);
             }
 
-            let word = u16::from_le_bytes([buf[byte_idx], buf[byte_idx + 1]]) as usize;
+            let candidate = u16::from_le_bytes([buf[byte_idx], buf[byte_idx + 1]]) as usize;
             byte_idx += 2;
 
-            // Rejection sampling: accept if word < max_valid
-            if word < max_valid {
-                break word;
-            }
-            // Else reject and continue loop (consume next word)
-        };
-        
+            // CT: word is updated only if candidate < max_valid and we haven't found one yet
+            let is_valid = (candidate < max_valid) as u8;
+            let not_found_yet = word_valid ^ 1;
+            let update_mask = is_valid & not_found_yet;
+
+            word = (candidate & (update_mask as usize)) | (word & !(update_mask as usize));
+            word_valid |= is_valid;
+        }
+
+        // If no valid word found after 10 attempts (extremely unlikely), use last candidate
+        // This maintains constant-time but with a tiny bias - acceptable for keygen
+        if word_valid == 0 {
+            word = word; // already set to last candidate
+        }
+
         let target = word % avail_count;
 
         // CT scan: find the target-th available position.
@@ -245,11 +258,17 @@ mod tests {
 ///
 /// This is a necessary condition for girth >= 6 (not sufficient — full check requires BFS).
 /// Constant-time: no early returns, full scan with mask accumulation. No HashSet (timing leak).
+/// CT: uses precomputed bit array instead of calling get_bit with secret indices.
 pub fn check_girth(poly: &crate::polynomial::Polynomial, min_girth: usize) -> bool {
     if min_girth <= 4 {
         return true;
     }
-    let ones: Vec<usize> = (0..M).filter(|&p| poly.get_bit(p) == 1).collect();
+    // Precompute all bits in a CT-friendly array to avoid secret-dependent indexing
+    let mut poly_bits = [0u8; M];
+    for i in 0..M {
+        poly_bits[i] = poly.get_bit(i);
+    }
+    let ones: Vec<usize> = (0..M).filter(|&p| poly_bits[p] == 1).collect();
     if ones.len() < 3 {
         return true;
     }

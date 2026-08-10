@@ -27,7 +27,9 @@ impl Polynomial {
 
 impl Polynomial {
     pub fn zero() -> Polynomial {
-        Polynomial { data: [0u8; PUBKEY_BYTES] }
+        Polynomial {
+            data: [0u8; PUBKEY_BYTES],
+        }
     }
 
     pub fn from_positions(positions: &[usize]) -> Polynomial {
@@ -40,14 +42,21 @@ impl Polynomial {
 
     pub fn from_bits(bits: &[u8]) -> ArcResult<Self> {
         if bits.len() != M {
-            return Err(ArcError::InvalidInput(format!("expected {} bits, got {}", M, bits.len())));
+            return Err(ArcError::InvalidInput(format!(
+                "expected {} bits, got {}",
+                M,
+                bits.len()
+            )));
         }
         let mut poly = Polynomial::zero();
         for (i, &b) in bits.iter().enumerate() {
             if b == 1 {
                 poly.set_bit(i, 1);
             } else if b != 0 {
-                return Err(ArcError::InvalidInput(format!("bit {} is {} (must be 0 or 1)", i, b)));
+                return Err(ArcError::InvalidInput(format!(
+                    "bit {} is {} (must be 0 or 1)",
+                    i, b
+                )));
             }
         }
         Ok(poly)
@@ -176,15 +185,15 @@ impl Polynomial {
             (other, self)
         };
         let mut result = Polynomial::zero();
-    
+
         // CT: scan all bit positions, conditionally XOR shifted b
         for pos in 0..M {
             let bit_val = a.get_bit(pos) as u8;
             let do_xor = bit_val.wrapping_neg(); // 0xFF if bit=1, 0 if bit=0
-        
+
             // CT shift using scan-all pattern
             let shifted = cyclic_shift_bytes_ct(b.as_bytes(), pos);
-        
+
             // Conditional XOR with mask
             for i in 0..PUBKEY_BYTES {
                 result.data[i] ^= shifted[i] & do_xor;
@@ -197,10 +206,14 @@ impl Polynomial {
         let mut pos = Vec::with_capacity(self.weight());
         for byte_idx in 0..PUBKEY_BYTES {
             let byte = self.data[byte_idx];
-            if byte == 0 { continue; }
+            if byte == 0 {
+                continue;
+            }
             for bit in 0..8 {
                 let p = byte_idx * 8 + bit;
-                if p >= M { break; }
+                if p >= M {
+                    break;
+                }
                 if (byte >> bit) & 1 == 1 {
                     pos.push(p);
                 }
@@ -211,7 +224,9 @@ impl Polynomial {
 
     pub fn cyclic_shift(&self, shift: usize) -> Polynomial {
         let shift_mod = shift % M;
-        if shift_mod == 0 { return self.clone(); }
+        if shift_mod == 0 {
+            return self.clone();
+        }
         let result = cyclic_shift_bytes_ct(&self.data, shift_mod);
         Polynomial { data: result }
     }
@@ -224,22 +239,30 @@ impl Polynomial {
         f[0] = 1;
         f[M] = 1;
         let (gcd, u, _v) = ext_gcd_poly(&a, &f)?;
-        if !(gcd.len() == 1 && gcd[0] == 1) { return Err(ArcError::AlgebraicError("Polynomial not invertible".into())); }
+        if !(gcd.len() == 1 && gcd[0] == 1) {
+            return Err(ArcError::AlgebraicError("Polynomial not invertible".into()));
+        }
         let inv = reduce_mod_l_final(&u, M);
         Ok(inv)
     }
 
     fn to_bit_vec(&self) -> Vec<u8> {
         let mut v = vec![0u8; M];
-        for i in 0..M { v[i] = self.get_bit(i); }
+        for i in 0..M {
+            v[i] = self.get_bit(i);
+        }
         v
     }
 
     fn from_bit_vec_truncated(bits: &[u8]) -> Polynomial {
         let mut poly = Polynomial::zero();
         for (i, &b) in bits.iter().enumerate() {
-            if i >= M { break; }
-            if b == 1 { poly.set_bit(i, 1); }
+            if i >= M {
+                break;
+            }
+            if b == 1 {
+                poly.set_bit(i, 1);
+            }
         }
         poly
     }
@@ -317,7 +340,12 @@ fn ext_gcd_poly(a: &[u8], b: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), ArcEr
         let new_s = poly_add(&s0, &q_s1);
         let q_t1 = poly_mul(&q, &t1);
         let new_t = poly_add(&t0, &q_t1);
-        r0 = r1; r1 = r; s0 = s1; s1 = new_s; t0 = t1; t1 = new_t;
+        r0 = r1;
+        r1 = r;
+        s0 = s1;
+        s1 = new_s;
+        t0 = t1;
+        t1 = new_t;
     }
     Ok((r0, s0, t0))
 }
@@ -338,7 +366,9 @@ fn poly_div(a: &[u8], b: &[u8]) -> Result<(Vec<u8>, Vec<u8>), ArcError> {
     let a = trim(a);
     let b = trim(b);
     if b.is_empty() || (b.len() == 1 && b[0] == 0) {
-        return Err(ArcError::AlgebraicError("Division by zero polynomial".into()));
+        return Err(ArcError::AlgebraicError(
+            "Division by zero polynomial".into(),
+        ));
     }
     let b_deg = b.len() - 1;
     let mut r = a;
@@ -348,10 +378,16 @@ fn poly_div(a: &[u8], b: &[u8]) -> Result<(Vec<u8>, Vec<u8>), ArcError> {
         let r_deg = r.len() - 1;
         let shift = r_deg - b_deg;
         q[shift] = 1;
-        for j in 0..b.len() { r[shift + j] ^= b[j]; }
-        while r.last() == Some(&0) { r.pop(); }
+        for j in 0..b.len() {
+            r[shift + j] ^= b[j];
+        }
+        while r.last() == Some(&0) {
+            r.pop();
+        }
     }
-    if r.is_empty() { r = vec![0u8]; }
+    if r.is_empty() {
+        r = vec![0u8];
+    }
     Ok((trim(&q), trim(&r)))
 }
 
@@ -365,7 +401,9 @@ fn poly_mul(a: &[u8], b: &[u8]) -> Vec<u8> {
     for i in 0..a.len() {
         if a[i] == 1 {
             for j in 0..b.len() {
-                if b[j] == 1 { res[i + j] ^= 1; }
+                if b[j] == 1 {
+                    res[i + j] ^= 1;
+                }
             }
         }
     }
@@ -375,8 +413,12 @@ fn poly_mul(a: &[u8], b: &[u8]) -> Vec<u8> {
 fn poly_add(a: &[u8], b: &[u8]) -> Vec<u8> {
     let max_len = std::cmp::max(a.len(), b.len());
     let mut res = vec![0u8; max_len];
-    for i in 0..a.len() { res[i] ^= a[i]; }
-    for i in 0..b.len() { res[i] ^= b[i]; }
+    for i in 0..a.len() {
+        res[i] ^= a[i];
+    }
+    for i in 0..b.len() {
+        res[i] ^= b[i];
+    }
     trim(&res)
 }
 
@@ -386,15 +428,21 @@ fn is_zero_poly(p: &[u8]) -> bool {
 
 fn trim(p: &[u8]) -> Vec<u8> {
     let mut end = p.len();
-    while end > 0 && p[end - 1] == 0 { end -= 1; }
-    if end == 0 { vec![0u8] } else { p[..end].to_vec() }
+    while end > 0 && p[end - 1] == 0 {
+        end -= 1;
+    }
+    if end == 0 {
+        vec![0u8]
+    } else {
+        p[..end].to_vec()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use rand::Rng;
     use super::*;
     use crate::parameters::*;
+    use rand::Rng;
 
     #[test]
     fn test_zero_and_bit_ops() {
@@ -486,4 +534,3 @@ mod tests {
         assert!(z.invert().is_none());
     }
 }
-

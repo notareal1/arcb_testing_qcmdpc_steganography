@@ -2,8 +2,8 @@
 // Bit-sliced circulant matrix operations for QC-MDPC.
 // M=16384, num_words = ceil(M/64) = 256. Each syndrome is O(weight * M/64).
 
-use crate::polynomial::Polynomial;
 use crate::parameters::{M, PUBKEY_BYTES};
+use crate::polynomial::Polynomial;
 use zeroize::Zeroize;
 
 #[derive(Clone, Debug)]
@@ -35,7 +35,12 @@ impl Circulant {
         let ones = Self::get_set_bits(&poly);
         let h_words = bytes_to_words(poly.as_bytes());
 
-        Circulant { poly, h_words, row_weight: w, ones }
+        Circulant {
+            poly,
+            h_words,
+            row_weight: w,
+            ones,
+        }
     }
 
     pub fn polynomial(&self) -> &Polynomial {
@@ -50,7 +55,6 @@ impl Circulant {
     pub fn ones(&self) -> &[usize] {
         &self.ones
     }
-
 
     /// Constant-time syndrome computation.
     ///
@@ -291,7 +295,10 @@ mod tests {
         let circ = Circulant::new(h);
         let s_fast = circ.compute_syndrome(&v);
         let s_ct = circ.compute_syndrome_ct(&v);
-        assert!(s_fast.equals(&s_ct), "Bitsliced and non-CT syndrome should match");
+        assert!(
+            s_fast.equals(&s_ct),
+            "Bitsliced and non-CT syndrome should match"
+        );
     }
 
     #[test]
@@ -302,8 +309,11 @@ mod tests {
         let circ = Circulant::new(h);
         let s_fast = circ.compute_syndrome(&v);
         let s_bitsliced = circ.compute_syndrome_ct(&v);
-        assert!(s_fast.equals(&s_bitsliced), "Bitsliced and non-CT syndrome should match. Fast weight: {}, Bitsliced weight: {}", s_fast.weight(), s_bitsliced.weight());
+        assert!(
+            s_fast.equals(&s_bitsliced),
+            "Bitsliced and non-CT syndrome should match. Fast weight: {}, Bitsliced weight: {}",
+            s_fast.weight(),
+            s_bitsliced.weight()
+        );
     }
 }
-
-

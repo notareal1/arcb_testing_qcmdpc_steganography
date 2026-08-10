@@ -133,7 +133,7 @@ fn from_seed_with_check(seed: [u8; SEED_BYTES]) -> Result<KeyPair, ArcError> {
 }
 
 /// Check for small trapping sets (a,b) in the Tanner graph of the QC-MDPC code.
-/// 
+///
 /// A trapping set (a,b) is a set of 'a' variable nodes connected to 'b' odd-degree
 /// check nodes (unsatisfied parity checks). Small trapping sets cause BGF decoder
 /// to oscillate/fail because flipping bits in the set doesn't reduce syndrome weight.
@@ -147,15 +147,15 @@ fn from_seed_with_check(seed: [u8; SEED_BYTES]) -> Result<KeyPair, ArcError> {
 fn has_small_trapping_sets(h0: &Polynomial, h1: &Polynomial) -> bool {
     let ones_h0: Vec<usize> = (0..M).filter(|&p| h0.get_bit(p) == 1).collect();
     let ones_h1: Vec<usize> = (0..M).filter(|&p| h1.get_bit(p) == 1).collect();
-    
+
     // Check both halves for trapping sets
     let mut has_ts = 0u8;
     has_ts |= check_trapping_sets_half(&ones_h0, h0) as u8;
     has_ts |= check_trapping_sets_half(&ones_h1, h1) as u8;
-    
+
     // Cross-check between halves
     has_ts |= check_cross_trapping_sets(&ones_h0, h1) as u8;
-    
+
     has_ts != 0
 }
 
@@ -165,14 +165,14 @@ fn has_small_trapping_sets(h0: &Polynomial, h1: &Polynomial) -> bool {
 fn check_trapping_sets_half(ones: &[usize], poly: &Polynomial) -> bool {
     let w = ones.len();
     let mut has_ts = 0u8;
-    
+
     // For each pair of variable nodes, count shared check nodes
     // This detects (2,b) configurations
     for i in 0..w {
         for j in (i + 1)..w {
             let p1 = ones[i];
             let p2 = ones[j];
-            
+
             let shift = (M + p1 - p2) % M;
             let mut shared = 0u16;
             // CT: scan all positions, use bitwise equality to count
@@ -181,7 +181,7 @@ fn check_trapping_sets_half(ones: &[usize], poly: &Polynomial) -> bool {
                 let is_one = poly.get_bit(target) as u16;
                 shared += is_one;
             }
-            
+
             // (2,b) trapping set: 2 variable nodes sharing b check nodes
             // b=2 is a 4-cycle (already caught by girth check)
             // b>=3 indicates small trapping set
@@ -189,7 +189,7 @@ fn check_trapping_sets_half(ones: &[usize], poly: &Polynomial) -> bool {
             has_ts |= is_ts;
         }
     }
-    
+
     // Check for (3,b) trapping sets - 3 variable nodes with few odd-degree checks
     // This is more expensive but catches the most dangerous TS
     if w <= 45 {
@@ -199,7 +199,7 @@ fn check_trapping_sets_half(ones: &[usize], poly: &Polynomial) -> bool {
                     // Check how many check nodes have odd degree among these 3 variables
                     // A check node has odd degree if it connects to 1 or 3 of these variables
                     let mut odd_checks = 0u16;
-                    
+
                     // For each check node, count connections to our 3 variables
                     for c in 0..M {
                         let mut connections = 0u8;
@@ -210,7 +210,7 @@ fn check_trapping_sets_half(ones: &[usize], poly: &Polynomial) -> bool {
                         let is_odd = (connections % 2) as u16;
                         odd_checks += is_odd;
                     }
-                    
+
                     // (3,b) with b <= 4 is dangerous for BGF
                     let is_ts = (odd_checks <= 4) as u8;
                     has_ts |= is_ts;
@@ -218,7 +218,7 @@ fn check_trapping_sets_half(ones: &[usize], poly: &Polynomial) -> bool {
             }
         }
     }
-    
+
     has_ts != 0
 }
 
@@ -228,7 +228,7 @@ fn check_cross_trapping_sets(ones_h0: &[usize], h1: &Polynomial) -> bool {
     // Variable in h0 connecting to checks in h1
     let ones_h1: Vec<usize> = (0..M).filter(|&p| h1.get_bit(p) == 1).collect();
     let mut has_ts = 0u8;
-    
+
     for &p1 in ones_h0 {
         for &p2 in &ones_h1 {
             let shift = (M + p1 - p2) % M;
@@ -243,7 +243,7 @@ fn check_cross_trapping_sets(ones_h0: &[usize], h1: &Polynomial) -> bool {
             has_ts |= is_ts;
         }
     }
-    
+
     has_ts != 0
 }
 
@@ -283,7 +283,8 @@ mod tests {
                 assert!(
                     !keys[i].public.equals(&keys[j].public),
                     "keys {} and {} should differ",
-                    i, j
+                    i,
+                    j
                 );
             }
         }

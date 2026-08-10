@@ -1,9 +1,9 @@
 [package]
 name = "arcb-stegano-trapdoor"
-version = "5.13.0"
+version = "5.14.0"
 edition = "2021"
 authors = ["notareal1"]
-description = "ARCB-SteganoTrapdoor v5.13: post-quantum KEM + steganographic trapdoor (security hardened)"
+description = "ARCB-SteganoTrapdoor v5.14: post-quantum KEM + steganographic trapdoor (security hardened)"
 license = "MIT"
 
 [dependencies]

@@ -105,7 +105,7 @@ pub fn encapsulate_stego_with_message(
     }
 
     Err(ArcError::EncodingError(
-        "Failed to generate statistically uniform digit distribution after max attempts".into()
+        "Failed to generate statistically uniform digit distribution after max attempts".into(),
     ))
 }
 
@@ -121,7 +121,7 @@ fn encode_uniform_digits(
     // Uniform encoding strategy:
     // We have 32768 mask bits (50% 0, 50% 1 from random codeword)
     // Each mask bit + payload chunk maps to a uniform digit 0-9
-    // 
+    //
     // Capacity: log2(10) ≈ 3.32 bits per digit
     // Total capacity: 37768 * 3.32 ≈ 125,000 bits ≈ 15.6 KB
     // Payload max: 8000 bytes = 64,000 bits (well within capacity)
@@ -130,13 +130,13 @@ fn encode_uniform_digits(
     // - mask=0 (50%): we need to select from 10 digits uniformly
     // - mask=1 (50%): same
     // Use payload bits to drive uniform digit selection
-    
+
     // We use a simple approach: accumulate payload bits and emit base-10 digits
     // This is essentially arithmetic/base-10 encoding
-    
+
     let mut digits = Vec::with_capacity(SUPERBLOCK_DIGITS);
     let mut bit_idx = 0;
-    
+
     // First, encode mask region (2*M digits) with uniform distribution
     // We'll use payload bits to determine digits, with mask as additional entropy
     for i in 0..2 * M {
@@ -145,33 +145,32 @@ fn encode_uniform_digits(
         } else {
             mask1.get_bit(i - M)
         };
-        
+
         // For each position, we generate a uniform digit 0-9
         // using payload bits + mask_bit as entropy
+        // CT: consume exactly 16 bits, use modulo (bias 0.015% is negligible)
+        // 65536 % 10 = 6, so values 0-5 get 6554 occurrences, 6-9 get 6553
         let mut val = 0u8;
-        let mut bits_used = 0;
-        
-        // Collect bits until we have enough for a uniform 0-9 selection
-        // Need log2(10) ≈ 3.32 bits, so use 4 bits (16 values) with rejection
-        while val > 9 || bits_used < 4 {
+        let mut val_hi = 0u8; // 16-bit value built from two u8
+        for _ in 0..16 {
             if bit_idx < payload_bits.len() {
                 val = (val << 1) | payload_bits[bit_idx];
                 bit_idx += 1;
             } else {
                 val = (val << 1) | (rng.gen::<u8>() & 1);
             }
-            bits_used += 1;
-            if bits_used >= 4 && val <= 9 {
-                break;
-            } else if bits_used >= 4 && val > 9 {
-                // Rejection: try again with fresh bits
+            // After 8 bits, move to hi byte
+            if _ == 7 {
+                val_hi = val;
                 val = 0;
-                bits_used = 0;
             }
         }
-        
-        // Mix in mask bit for domain separation (doesn't affect uniformity)
-        val = (val + (mask_bit as u8) * 5) % 10;
+        let val16 = ((val_hi as u16) << 8) | (val as u16);
+        let digit = (val16 % 10) as u8;
+
+        // Mix in mask bit for domain separation
+        // Adding 0 or 5 then mod 10: this preserves uniformity if digit was uniform
+        val = (digit + (mask_bit as u8) * 5) % 10;
         digits.push(val);
     }
 
@@ -194,20 +193,20 @@ fn encode_uniform_digits(
 fn is_digit_distribution_uniform(digits: &[u8]) -> bool {
     let total = digits.len() as f64;
     let expected = total / 10.0;
-    
+
     let mut counts = [0usize; 10];
     for &d in digits {
         if d <= 9 {
             counts[d as usize] += 1;
         }
     }
-    
+
     let mut chi_squared = 0.0;
     for count in counts {
         let diff = count as f64 - expected;
         chi_squared += (diff * diff) / expected;
     }
-    
+
     chi_squared <= CHI_SQUARED_THRESHOLD
 }
 
@@ -248,13 +247,17 @@ pub fn decapsulate_stego(seed: &[u8; SEED_BYTES], digits: &[u8]) -> Result<Vec<u
     // CT polynomial parsing - no unwrap_or_else, use mask for invalid
     let mask0 = Polynomial::from_bits(&mask_bits[..M]).unwrap_or_else(|_| Polynomial::zero());
     let mask1 = Polynomial::from_bits(&mask_bits[M..]).unwrap_or_else(|_| Polynomial::zero());
-    
+
     // Zeroize mask_bits after use (secret data)
     mask_bits.zeroize();
 
+    // Separate buffer for payload extraction to avoid reusing zeroized secret data
+    let mut payload_mask_bits = vec![0u8; N];
+
     // Compute syndrome s = H0*m0 + H1*m1
     // SECURITY: Must use CT version since h0/h1 are secret keys.
-    let (h0p, h1p) = utils::derive_secret_polynomials(seed).unwrap_or_else(|_| (Polynomial::zero(), Polynomial::zero()));
+    let (h0p, h1p) = utils::derive_secret_polynomials(seed)
+        .unwrap_or_else(|_| (Polynomial::zero(), Polynomial::zero()));
     let h0 = Circulant::new(h0p);
     let h1 = Circulant::new(h1p);
     let syndrome = h0
@@ -296,17 +299,19 @@ pub fn decapsulate_stego(seed: &[u8; SEED_BYTES], digits: &[u8]) -> Result<Vec<u
     }
 
     // Extract payload bits from first 2*M digits (always run)
-    // New uniform encoding: val = (4_payload_bits_with_rejection + mask_bit * 5) % 10
-    // To decode: val' = (val - mask_bit * 5) % 10, then extract 4 bits
+    // New uniform encoding: val = (16_payload_bits_modulo_10 + mask_bit * 5) % 10
+    // To decode: val' = (val + 10 - (mask_bit * 5) % 10) % 10, then val' is 0-9
+    // We extract ~3.32 bits per digit (log2(10))
     let mut payload_bits = Vec::with_capacity(2 * M * 4);
     for i in 0..2 * M {
         if i < digits.len() {
             let d = digits[i];
             let mask_bit = (d > 7) as u8;
-            mask_bits[i] = mask_bit;
+            payload_mask_bits[i] = mask_bit;
             // Reverse the encoding: val = (d + 10 - (mask_bit * 5) % 10) % 10
             let encoded_val = (d as u8 + 10 - ((mask_bit * 5) % 10)) % 10;
-            // Extract 4 bits from encoded_val (0-9)
+            // Extract bits from encoded_val (0-9) - use 4 bits (0-15, values 10-15 will be 0)
+            // We use all 4 bits for maximum capacity
             payload_bits.push((encoded_val >> 3) & 1);
             payload_bits.push((encoded_val >> 2) & 1);
             payload_bits.push((encoded_val >> 1) & 1);
@@ -331,7 +336,7 @@ pub fn decapsulate_stego(seed: &[u8; SEED_BYTES], digits: &[u8]) -> Result<Vec<u
     // Parse: length (4 bytes) || nonce (12 bytes) || ciphertext || tag (16 bytes)
     // Constant-time parsing - always do the work, mask result
     let has_min_len = (payload_bytes.len() >= 4 + 12 + 16) as u8;
-    
+
     // Explicit mask-based fallback instead of unwrap_or
     let ct_len_bytes: [u8; 4] = if payload_bytes.len() >= 4 {
         payload_bytes[..4].try_into().unwrap()
@@ -339,37 +344,54 @@ pub fn decapsulate_stego(seed: &[u8; SEED_BYTES], digits: &[u8]) -> Result<Vec<u
         [0u8; 4]
     };
     let ct_len = u32::from_le_bytes(ct_len_bytes) as usize;
-    let min_len = 4 + 12 + 16;
-    let ct_len_ok = (ct_len <= payload_bytes.len().saturating_sub(min_len)) as u8;
-    
+
+    // BOUNDS CHECK: Reject oversized payloads to prevent integer overflow
+    // Maximum allowed ciphertext length is MAX_PAYLOAD_BYTES (8000)
+    let ct_len_ok = if ct_len > MAX_PAYLOAD_BYTES {
+        0u8
+    } else {
+        let min_len = 4 + 12 + 16; // len + nonce + tag
+        (ct_len <= payload_bytes.len().saturating_sub(min_len)) as u8
+    };
+
+    // Cap ct_len for safe indexing (use MAX_PAYLOAD_BYTES as safe upper bound)
+    let safe_ct_len = ct_len.min(MAX_PAYLOAD_BYTES);
+
     let nonce: [u8; 12] = if payload_bytes.len() >= 16 {
         payload_bytes[4..16].try_into().unwrap()
     } else {
         [0u8; 12]
     };
-    
-    let ciphertext_with_tag: &[u8] = if 16 + ct_len + 16 <= payload_bytes.len() {
-        &payload_bytes[16..16 + ct_len + 16]
+
+    let ciphertext_with_tag: &[u8] = if 16 + safe_ct_len + 16 <= payload_bytes.len() {
+        &payload_bytes[16..16 + safe_ct_len + 16]
     } else {
         &[0u8; 0]
     };
-    let ct_tag_len_ok = (ciphertext_with_tag.len() == ct_len + 16) as u8;
+    let ct_tag_len_ok = (ciphertext_with_tag.len() == safe_ct_len + 16) as u8;
 
     // Decrypt with AES-256-GCM (always attempt, mask result)
     let cipher = Aes256Gcm::new((&session_key).into());
     let nonce_obj = Nonce::<U12>::from_slice(&nonce);
-    let tag_bytes: [u8; 16] = if ct_len + 16 <= ciphertext_with_tag.len() {
-        ciphertext_with_tag[ct_len..ct_len + 16].try_into().unwrap_or([0u8; 16])
+    let tag_bytes: [u8; 16] = if safe_ct_len + 16 <= ciphertext_with_tag.len() {
+        ciphertext_with_tag[safe_ct_len..safe_ct_len + 16]
+            .try_into()
+            .unwrap_or([0u8; 16])
     } else {
         [0u8; 16]
     };
-    let mut plaintext = if ct_len <= ciphertext_with_tag.len() {
-        ciphertext_with_tag[..ct_len].to_vec()
+    let mut plaintext = if safe_ct_len <= ciphertext_with_tag.len() {
+        ciphertext_with_tag[..safe_ct_len].to_vec()
     } else {
-        vec![0u8; ct_len]
+        vec![0u8; safe_ct_len]
     };
     let decrypt_ok = cipher
-        .decrypt_in_place_detached(&nonce_obj, b"", &mut plaintext, &aes_gcm::Tag::from(tag_bytes))
+        .decrypt_in_place_detached(
+            &nonce_obj,
+            b"",
+            &mut plaintext,
+            &aes_gcm::Tag::from(tag_bytes),
+        )
         .map(|_| 1u8)
         .unwrap_or(0u8);
 
@@ -379,7 +401,10 @@ pub fn decapsulate_stego(seed: &[u8; SEED_BYTES], digits: &[u8]) -> Result<Vec<u
     // Return plaintext if all ok, else empty vec
     let result_len = plaintext.len() & (all_ok as usize);
     plaintext.truncate(result_len);
-    
+
+    // Zeroize payload_mask_bits (contains secret-dependent mask bits)
+    payload_mask_bits.zeroize();
+
     Ok(plaintext)
 }
 
@@ -434,7 +459,10 @@ mod tests {
         // With corrupted digits, decapsulate_stego returns Ok with fake plaintext
         // (implicit rejection) instead of Err to prevent Error Oracle.
         let result = decapsulate_stego(&kp.seed, &digits).unwrap();
-        assert_ne!(result, message, "corrupted digits should not recover message");
+        assert_ne!(
+            result, message,
+            "corrupted digits should not recover message"
+        );
     }
 
     #[test]
@@ -461,27 +489,46 @@ mod tests {
     fn test_digit_distribution() {
         let kp = keygen::from_seed_without_dfr([0x42u8; SEED_BYTES]).unwrap();
         let digits = encapsulate_stego(&kp).unwrap();
-        
-        let mask_region = &digits[..2*M];
-        let padding_region = &digits[2*M..];
-        
+
+        let mask_region = &digits[..2 * M];
+        let padding_region = &digits[2 * M..];
+
         let mask_large = mask_region.iter().filter(|&&d| d > 7).count();
         let pad_large = padding_region.iter().filter(|&&d| d > 7).count();
-        
-        eprintln!("Mask region ({} digits): {} large ({:.1}%)", 
-                 mask_region.len(), mask_large, 100.0*mask_large as f64/mask_region.len() as f64);
-        eprintln!("Padding region ({} digits): {} large ({:.1}%)", 
-                 padding_region.len(), pad_large, 100.0*pad_large as f64/padding_region.len() as f64);
-        
+
+        eprintln!(
+            "Mask region ({} digits): {} large ({:.1}%)",
+            mask_region.len(),
+            mask_large,
+            100.0 * mask_large as f64 / mask_region.len() as f64
+        );
+        eprintln!(
+            "Padding region ({} digits): {} large ({:.1}%)",
+            padding_region.len(),
+            pad_large,
+            100.0 * pad_large as f64 / padding_region.len() as f64
+        );
+
         let total_large = mask_large + pad_large;
         let total = digits.len();
         let large_pct = 100.0 * total_large as f64 / total as f64;
-        eprintln!("Total: {} large out of {} ({:.1}%)", total_large, total, large_pct);
-        
+        eprintln!(
+            "Total: {} large out of {} ({:.1}%)",
+            total_large, total, large_pct
+        );
+
         // New uniform encoding: ~10% large (8-9) expected
         // Chi-squared test should pass
-        assert!(large_pct > 8.0, "Large digit percentage too low: {:.1}%, expected ~10%", large_pct);
-        assert!(large_pct < 12.0, "Large digit percentage too high: {:.1}%, expected ~10%", large_pct);
+        assert!(
+            large_pct > 8.0,
+            "Large digit percentage too low: {:.1}%, expected ~10%",
+            large_pct
+        );
+        assert!(
+            large_pct < 12.0,
+            "Large digit percentage too high: {:.1}%, expected ~10%",
+            large_pct
+        );
     }
 
     fn test_superblock_size() {
