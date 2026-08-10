@@ -15,6 +15,7 @@ use aes_gcm::{aead::consts::U12, AeadCore, AeadInPlace, Aes256Gcm, KeyInit, Nonc
 use blake3;
 use rand::rngs::OsRng;
 use rand::Rng;
+use zeroize::Zeroize;
 
 /// Maximum chi-squared statistic for uniform 0-9 distribution (p > 0.05, df=9)
 /// χ²_0.95(9) = 16.919
@@ -152,19 +153,19 @@ fn encode_uniform_digits(
         // 65536 % 10 = 6, so values 0-5 get 6554 occurrences, 6-9 get 6553
         let mut val = 0u8;
         let mut val_hi = 0u8; // 16-bit value built from two u8
-        for _ in 0..16 {
-            if bit_idx < payload_bits.len() {
-                val = (val << 1) | payload_bits[bit_idx];
-                bit_idx += 1;
-            } else {
-                val = (val << 1) | (rng.gen::<u8>() & 1);
-            }
-            // After 8 bits, move to hi byte
-            if _ == 7 {
-                val_hi = val;
-                val = 0;
-            }
-        }
+                for i in 0..16 {
+                    if bit_idx < payload_bits.len() {
+                        val = (val << 1) | payload_bits[bit_idx];
+                        bit_idx += 1;
+                    } else {
+                        val = (val << 1) | (rng.gen::<u8>() & 1);
+                    }
+                    // After 8 bits, move to hi byte
+                    if i == 7 {
+                        val_hi = val;
+                        val = 0;
+                    }
+                }
         let val16 = ((val_hi as u16) << 8) | (val as u16);
         let digit = (val16 % 10) as u8;
 

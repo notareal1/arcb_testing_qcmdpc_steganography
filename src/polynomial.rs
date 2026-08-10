@@ -529,8 +529,8 @@ mod tests {
     }
 
     #[test]
-    fn test_invert_zero() {
-        let z = Polynomial::zero();
-        assert!(z.invert().is_none());
+        fn test_invert_zero() {
+            let z = Polynomial::zero();
+            assert!(z.invert().is_err());
+        }
     }
-}

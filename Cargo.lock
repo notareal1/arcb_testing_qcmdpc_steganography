@@ -48,7 +48,7 @@ dependencies = [
 
 [[package]]
 name = "arcb-stegano-trapdoor"
-version = "5.13.0"
+version = "5.14.0"
 dependencies = [
  "aes-gcm",
  "blake3",
